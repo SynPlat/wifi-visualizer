@@ -47,45 +47,57 @@ jobs:
             --name "Wi-Fi Visualizer" \
             dashboard.py
 
-      - name: Create administrator launcher
+      - name: Create launcher
         run: |
           cat > launcher.applescript <<'APPLESCRIPT'
           set realApp to POSIX path of (path to resource "Wi-Fi Visualizer.app")
           set executablePath to realApp & "/Contents/MacOS/Wi-Fi Visualizer"
-
           do shell script quoted form of executablePath with administrator privileges
           APPLESCRIPT
 
           osacompile \
-            -o "Wi-Fi Visualizer Launcher.app" \
+            -o "Wi-Fi Visualizer.app" \
             launcher.applescript
 
-      - name: Add PyInstaller app to launcher resources
+      - name: Add real application
         run: |
-          mkdir -p \
-            "Wi-Fi Visualizer Launcher.app/Contents/Resources"
+          mkdir -p "Wi-Fi Visualizer.app/Contents/Resources"
 
           cp -R \
             "dist/Wi-Fi Visualizer.app" \
-            "Wi-Fi Visualizer Launcher.app/Contents/Resources/"
+            "Wi-Fi Visualizer.app/Contents/Resources/"
 
-      - name: Rename final app
+      - name: Sign completed application
         run: |
-          rm -rf dist
-          mkdir dist
+          codesign \
+            --force \
+            --deep \
+            --sign - \
+            "Wi-Fi Visualizer.app"
 
-          mv \
-            "Wi-Fi Visualizer Launcher.app" \
-            "dist/Wi-Fi Visualizer.app"
+          codesign \
+            --verify \
+            --deep \
+            --strict \
+            --verbose=2 \
+            "Wi-Fi Visualizer.app"
 
-      - name: Create ZIP
+      - name: Package
         run: |
-          cd dist
+          rm -rf dist-release
+          mkdir dist-release
+
+          cp -R \
+            "Wi-Fi Visualizer.app" \
+            dist-release/
+
+          cd dist-release
+
           zip -r \
             "../WiFi-Visualizer-macOS-${{ matrix.arch }}.zip" \
             "Wi-Fi Visualizer.app"
 
-      - name: Upload artifact
+      - name: Upload build
         uses: actions/upload-artifact@v4
         with:
           name: WiFi-Visualizer-macOS-${{ matrix.arch }}
@@ -105,7 +117,7 @@ jobs:
           path: release-files
           merge-multiple: true
 
-      - name: Create GitHub Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
