@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 import subprocess
+import os
 import re
 import threading
 import time
@@ -34,36 +35,86 @@ start_time = time.time()
 # ============================================================
 
 def get_wifi_info():
+    """Read live Wi-Fi information on macOS.
+
+    The app is normally started through the .command launcher with sudo.
+    When already running as root, call wdutil directly instead of spawning
+    another sudo process. If that fails, fall back to system_profiler so the
+    dashboard can still identify the current Wi-Fi network.
+    """
+    commands = []
+
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        commands.append(["/usr/bin/wdutil", "info"])
+    else:
+        commands.append(["/usr/bin/sudo", "-n", "/usr/bin/wdutil", "info"])
+
+    for command in commands:
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=8,
+            )
+        except Exception:
+            continue
+
+        if result.returncode != 0:
+            continue
+
+        output = result.stdout
+
+        def value(name):
+            m = re.search(
+                rf"^\s*{re.escape(name)}\s*:\s*(.+)$",
+                output,
+                re.MULTILINE,
+            )
+            return m.group(1).strip() if m else "Unknown"
+
+        data = {
+            "rssi": value("RSSI"),
+            "noise": value("Noise"),
+            "channel": value("Channel"),
+            "tx": value("Tx Rate"),
+            "phy": value("PHY Mode"),
+        }
+
+        if data["rssi"] != "Unknown":
+            return data
+
+    # Last-resort fallback: identify the current network even if wdutil is
+    # unavailable. Signal/noise remain Unknown rather than crashing the UI.
     try:
         result = subprocess.run(
-           ["sudo", "-n", "/usr/bin/wdutil", "info"],
+            ["/usr/sbin/system_profiler", "SPAirPortDataType"],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=10,
         )
+        if result.returncode == 0:
+            output = result.stdout
+            current = re.search(
+                r"Current Network Information:\s*\n\s*([^\n:]+):",
+                output,
+            )
+            channel = re.search(r"^\s*Channel:\s*(.+)$", output, re.MULTILINE)
+            tx = re.search(r"^\s*Transmit Rate:\s*(.+)$", output, re.MULTILINE)
+            phy = re.search(r"^\s*PHY Mode:\s*(.+)$", output, re.MULTILINE)
+
+            if current:
+                return {
+                    "rssi": "Unknown",
+                    "noise": "Unknown",
+                    "channel": channel.group(1).strip() if channel else "Unknown",
+                    "tx": tx.group(1).strip() if tx else "Unknown",
+                    "phy": phy.group(1).strip() if phy else "Unknown",
+                }
     except Exception:
-        return None
+        pass
 
-    if result.returncode != 0:
-        return None
-
-    output = result.stdout
-
-    def value(name):
-        m = re.search(
-            rf"^\s*{re.escape(name)}\s*:\s*(.+)$",
-            output,
-            re.MULTILINE
-        )
-        return m.group(1).strip() if m else "Unknown"
-
-    return {
-        "rssi": value("RSSI"),
-        "noise": value("Noise"),
-        "channel": value("Channel"),
-        "tx": value("Tx Rate"),
-        "phy": value("PHY Mode")
-    }
+    return None
 
 
 # ============================================================
@@ -173,12 +224,88 @@ threading.Thread(target=ping_worker, daemon=True).start()
 # ============================================================
 
 def scan_networks():
+    """Return nearby Wi-Fi networks using macOS system_profiler JSON.
+
+    JSON is considerably more stable than parsing the human-readable output.
+    A text parser is retained as a fallback for older macOS versions.
+    """
     try:
         result = subprocess.run(
-            ["system_profiler", "SPAirPortDataType"],
+            ["/usr/sbin/system_profiler", "SPAirPortDataType", "-json"],
             capture_output=True,
             text=True,
-            timeout=15
+            timeout=20,
+        )
+    except Exception:
+        result = None
+
+    if result is not None and result.returncode == 0 and result.stdout.strip():
+        try:
+            import json
+            payload = json.loads(result.stdout)
+            found = []
+
+            def walk(obj, in_other=False):
+                if isinstance(obj, dict):
+                    name = obj.get("_name") or obj.get("name")
+                    local = in_other or name == "Other Local Wi-Fi Networks"
+
+                    if local and name and name != "Other Local Wi-Fi Networks":
+                        channel = str(obj.get("spchannel") or obj.get("channel") or "?")
+                        signal = obj.get("spairport_signal_noise") or obj.get("signal_noise")
+                        if isinstance(signal, str):
+                            nums = re.findall(r"-?\d+", signal)
+                            signal = int(nums[0]) if nums else None
+                        elif isinstance(signal, (list, tuple)) and signal:
+                            try:
+                                signal = int(signal[0])
+                            except Exception:
+                                signal = None
+
+                        security = obj.get("spsecurity") or obj.get("security") or "?"
+                        band = "?"
+                        if "2GHz" in channel or "2.4" in channel:
+                            band = "2.4 GHz"
+                        elif "5GHz" in channel or "5 GHz" in channel:
+                            band = "5 GHz"
+                        elif "6GHz" in channel or "6 GHz" in channel:
+                            band = "6 GHz"
+
+                        if signal is not None:
+                            found.append({
+                                "ssid": str(name),
+                                "channel": channel,
+                                "band": band,
+                                "signal": signal,
+                                "security": str(security),
+                            })
+
+                    for value in obj.values():
+                        walk(value, local)
+
+                elif isinstance(obj, list):
+                    for value in obj:
+                        walk(value, in_other)
+
+            walk(payload)
+
+            # De-duplicate networks that appear more than once in JSON.
+            unique = {}
+            for n in found:
+                key = (n["ssid"], n["channel"], n["signal"])
+                unique[key] = n
+            if unique:
+                return list(unique.values())
+        except Exception:
+            pass
+
+    # Fallback for macOS versions whose JSON schema differs.
+    try:
+        result = subprocess.run(
+            ["/usr/sbin/system_profiler", "SPAirPortDataType"],
+            capture_output=True,
+            text=True,
+            timeout=20,
         )
     except Exception:
         return []
@@ -203,28 +330,19 @@ def scan_networks():
         if stripped.startswith("Current Network Information:"):
             break
 
-        # Network name lines in system_profiler output are indented
         if (
             raw.startswith("        ")
             and stripped.endswith(":")
             and not stripped.startswith((
-                "PHY Mode:",
-                "Channel:",
-                "Network Type:",
-                "Security:",
-                "Signal / Noise:",
-                "Transmit Rate:"
+                "PHY Mode:", "Channel:", "Network Type:", "Security:",
+                "Signal / Noise:", "Transmit Rate:",
             ))
         ):
             if current:
                 networks.append(current)
-
             current = {
-                "ssid": stripped[:-1],
-                "channel": "?",
-                "band": "?",
-                "signal": None,
-                "security": "?"
+                "ssid": stripped[:-1], "channel": "?", "band": "?",
+                "signal": None, "security": "?"
             }
             continue
 
@@ -234,34 +352,23 @@ def scan_networks():
         if stripped.startswith("Channel:"):
             ch = stripped.split(":", 1)[1].strip()
             current["channel"] = ch
-
             if "2GHz" in ch:
                 current["band"] = "2.4 GHz"
             elif "5GHz" in ch:
                 current["band"] = "5 GHz"
             elif "6GHz" in ch:
                 current["band"] = "6 GHz"
-
         elif stripped.startswith("Signal / Noise:"):
-            nums = re.findall(
-                r"-?\d+",
-                stripped.split(":", 1)[1]
-            )
+            nums = re.findall(r"-?\d+", stripped.split(":", 1)[1])
             if nums:
                 current["signal"] = int(nums[0])
-
         elif stripped.startswith("Security:"):
-            current["security"] = stripped.split(
-                ":", 1
-            )[1].strip()
+            current["security"] = stripped.split(":", 1)[1].strip()
 
     if current:
         networks.append(current)
 
-    return [
-        n for n in networks
-        if n["signal"] is not None
-    ]
+    return [n for n in networks if n["signal"] is not None]
 
 
 def channel_analysis(networks):
