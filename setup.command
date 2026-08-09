@@ -13,13 +13,38 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 echo "🐍 Creating Python environment..."
-python3 -m venv .venv
 
+if [ ! -d ".venv" ]; then
+    python3 -m venv .venv
+fi
+
+echo ""
 echo "📦 Installing dependencies..."
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -r requirements.txt
 
 echo ""
+echo "🔨 Installing PyInstaller..."
+.venv/bin/python -m pip install pyinstaller
+
+echo ""
+echo "🏗️ Building Wi-Fi Visualizer.app..."
+
+rm -rf build dist
+
+.venv/bin/pyinstaller \
+    --noconfirm \
+    --clean \
+    --windowed \
+    --name "Wi-Fi Visualizer" \
+    dashboard.py
+
+echo ""
 echo "✅ Setup complete!"
 echo ""
+echo "Run the dashboard with:"
+echo "sudo -k"
+echo "./launch_wifi_visualizer.sh"
+echo ""
+
 read -p "Press Enter to close..."

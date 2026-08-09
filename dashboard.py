@@ -36,7 +36,7 @@ start_time = time.time()
 def get_wifi_info():
     try:
         result = subprocess.run(
-            ["sudo", "-n", "/usr/bin/wdutil", "info"],
+           ["sudo", "-n", "/usr/bin/wdutil", "info"],
             capture_output=True,
             text=True,
             timeout=5
