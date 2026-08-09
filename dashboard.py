@@ -714,3 +714,4 @@ def update_dashboard():
 
 update_dashboard()
 root.mainloop()
+# Wi-Fi Visualizer v1.2.4 - verified Wi-Fi detection
