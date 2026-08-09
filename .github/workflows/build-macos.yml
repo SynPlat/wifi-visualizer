@@ -16,15 +16,18 @@ jobs:
         include:
           - arch: arm64
             runner: macos-14
+
           - arch: x86_64
             runner: macos-15-intel
 
     runs-on: ${{ matrix.runner }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
@@ -34,39 +37,97 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller
 
-      - name: Build app
+      - name: Build application
         run: |
-          rm -rf build dist
-          pyinstaller --noconfirm --clean --windowed \
-            --name "Wi-Fi Visualizer" dashboard.py
+          rm -rf build dist package release
+          mkdir -p package release
 
-      - name: Create launcher
+          pyinstaller \
+            --noconfirm \
+            --clean \
+            --windowed \
+            --name "Wi-Fi Visualizer" \
+            dashboard.py
+
+      - name: Create working launcher
         run: |
-          mkdir -p package
-          cp -R "dist/Wi-Fi Visualizer.app" package/
+          cp -R "dist/Wi-Fi Visualizer.app" "package/Wi-Fi Visualizer.app"
 
-          printf '%s\n' \
-            '#!/bin/bash' \
-            'cd "$(dirname "$0")" || exit 1' \
-            'sudo "./Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer"' \
-            > "package/Wi-Fi Visualizer.command"
+          cat > "package/Wi-Fi Visualizer.command" <<'EOF'
+          #!/bin/bash
+
+          cd "$(dirname "$0")" || exit 1
+
+          echo "======================================"
+          echo "       Wi-Fi Visualizer"
+          echo "======================================"
+          echo ""
+          echo "Administrator permission is required"
+          echo "to read macOS Wi-Fi information."
+          echo ""
+
+          sudo -v || exit 1
+
+          sudo "./Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer"
+
+          echo ""
+          echo "Wi-Fi Visualizer closed."
+          read -p "Press Enter to close..."
+          EOF
 
           chmod +x "package/Wi-Fi Visualizer.command"
+
+      - name: Create instructions
+        run: |
+          cat > "package/README.txt" <<'EOF'
+          WI-FI VISUALIZER
+          =================
+
+          IMPORTANT:
+          Do NOT double-click "Wi-Fi Visualizer.app".
+
+          macOS requires administrator permission for Wi-Fi
+          signal information.
+
+          To start the application:
+
+          1. Double-click:
+             Wi-Fi Visualizer.command
+
+          2. Enter your Mac password when Terminal asks.
+
+          3. The Wi-Fi Visualizer dashboard will open.
+
+          Apple Silicon Macs:
+          Use the arm64 download.
+
+          Intel Macs:
+          Use the x86_64 download.
+          EOF
+
+      - name: Verify package
+        run: |
+          test -d "package/Wi-Fi Visualizer.app"
+          test -x "package/Wi-Fi Visualizer.command"
+          test -f "package/README.txt"
+          test -x "package/Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer"
+
+          echo "=== PACKAGE ==="
+          find package -maxdepth 3 -print
 
           echo "=== LAUNCHER ==="
           cat "package/Wi-Fi Visualizer.command"
 
-          echo "=== APP EXECUTABLE ==="
-          ls -l "package/Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer"
-
       - name: Package
         run: |
-          mkdir release
-          ditto -c -k --sequesterRsrc --keepParent \
+          ditto -c -k \
+            --sequesterRsrc \
+            --keepParent \
             "package" \
             "release/WiFi-Visualizer-macOS-${{ matrix.arch }}.zip"
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
           name: WiFi-Visualizer-${{ matrix.arch }}
           path: release/*.zip
@@ -77,12 +138,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download builds
+        uses: actions/download-artifact@v4
         with:
           path: release-files
           merge-multiple: true
 
-      - uses: softprops/action-gh-release@v2
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: release-files/*.zip
