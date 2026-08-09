@@ -5,7 +5,50 @@ import os
 import re
 import threading
 import time
+import sys
+import shlex
 from collections import deque, defaultdict
+
+
+# ============================================================
+# MACOS ADMIN ELEVATION
+# ============================================================
+
+def ensure_admin():
+    # The .command launcher already runs the app with sudo.
+    # When the .app is double-clicked in Finder, macOS does not give it
+    # administrator privileges. Ask macOS for permission and relaunch
+    # this exact executable as root.
+    if sys.platform != "darwin":
+        return
+
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return
+
+    executable = shlex.quote(os.path.abspath(sys.executable))
+
+    # Escape the shell command for an AppleScript string literal.
+    shell_command = f"exec {executable}"
+    applescript_string = shell_command.replace("\\", "\\\\").replace('"', '\\\"')
+
+    script = (
+        f'do shell script "{applescript_string}" '
+        f'with administrator privileges'
+    )
+
+    try:
+        subprocess.Popen(
+            ["/usr/bin/osascript", "-e", script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
+    sys.exit(0)
+
+
+ensure_admin()
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -714,4 +757,3 @@ def update_dashboard():
 
 update_dashboard()
 root.mainloop()
-# Wi-Fi Visualizer v1.2.4 - verified Wi-Fi detection
