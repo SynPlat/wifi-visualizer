@@ -297,777 +297,292 @@ def recommended_channel(networks):
     return min(scores, key=scores.get)
 
 
+
 # ============================================================
-# UI HELPERS
+# MODERN UI
 # ============================================================
 
-BG = "#0d1117"
-PANEL = "#151b21"
+BG = "#0a0f14"
+PANEL = "#111820"
+PANEL_2 = "#151e27"
+BORDER = "#25313c"
 CYAN = "#00e5ff"
-WHITE = "#f2f2f2"
-MUTED = "#858b92"
-BAR_BG = "#252c33"
+WHITE = "#f4f7fa"
+MUTED = "#7f8c99"
+GREEN = "#35d07f"
+YELLOW = "#f5c451"
+RED = "#ff5c69"
+BLUE = "#4da3ff"
 
+def card(parent, **kwargs):
+    return tk.Frame(parent, bg=PANEL, highlightbackground=BORDER,
+                    highlightthickness=1, bd=0, **kwargs)
 
-def label(parent, text="", size=10, bold=False, fg=WHITE, **kwargs):
-    return tk.Label(
-        parent,
-        text=text,
-        font=("Helvetica", size, "bold" if bold else "normal"),
-        fg=fg,
-        bg=PANEL,
-        **kwargs
-    )
-
+def make_label(parent, text="", size=10, bold=False, fg=WHITE, bg=PANEL, **kwargs):
+    return tk.Label(parent, text=text,
+                    font=("Helvetica", size, "bold" if bold else "normal"),
+                    fg=fg, bg=bg, **kwargs)
 
 # ============================================================
 # MAIN WINDOW
 # ============================================================
 
 root = tk.Tk()
-root.title("📡 Wi-Fi Visualizer")
-root.geometry("1250x900")
-root.minsize(1050, 780)
+root.title("Wi-Fi Visualizer")
+root.geometry("1320x900")
+root.minsize(1100, 760)
 root.configure(bg=BG)
 
+style = ttk.Style()
+try:
+    style.theme_use("clam")
+except Exception:
+    pass
+style.configure("Modern.Treeview", background=PANEL_2, foreground=WHITE,
+                fieldbackground=PANEL_2, borderwidth=0, rowheight=34,
+                font=("Helvetica", 10))
+style.configure("Modern.Treeview.Heading", background="#1c2732",
+                foreground=CYAN, borderwidth=0, font=("Helvetica", 9, "bold"))
+style.map("Modern.Treeview", background=[("selected", "#174b5b")],
+          foreground=[("selected", WHITE)])
 
-title = tk.Label(
-    root,
-    text="📡 WI-FI VISUALIZER",
-    font=("Helvetica", 27, "bold"),
-    fg=CYAN,
-    bg=BG
-)
-title.pack(pady=(10, 0))
+# Header
+header = tk.Frame(root, bg=BG)
+header.pack(fill="x", padx=28, pady=(24, 10))
+titlebox = tk.Frame(header, bg=BG)
+titlebox.pack(side="left")
+tk.Label(titlebox, text="Wi-Fi Visualizer", font=("Helvetica", 28, "bold"),
+         fg=WHITE, bg=BG).pack(anchor="w")
+tk.Label(titlebox, text="REAL-TIME WIRELESS ANALYTICS",
+         font=("Helvetica", 9, "bold"), fg=CYAN, bg=BG).pack(anchor="w", pady=(2,0))
 
-status = tk.Label(
-    root,
-    text="Connecting...",
-    font=("Helvetica", 11),
-    fg=MUTED,
-    bg=BG
-)
-status.pack(pady=(0, 5))
-
-
-# ============================================================
-# SCAN BUTTON
-# ============================================================
-
-
-def show_channel_chart(parent, networks, current_channel=None):
-    """Show a compact visual channel-congestion chart."""
-    from matplotlib.figure import Figure
-    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-
-    channels = channel_analysis(networks)
-
-    if not channels:
-        tk.Label(
-            parent,
-            text="No channel data available",
-            font=("Helvetica", 10, "bold"),
-            fg=MUTED,
-            bg=PANEL
-        ).pack(pady=8)
-        return
-
-    rows = sorted(channels.items())
-    channel_numbers = [ch for ch, _ in rows]
-    counts = [len(nets) for _, nets in rows]
-
-    figure = Figure(figsize=(8.8, 2.15), dpi=90)
-    figure.patch.set_facecolor(PANEL)
-
-    ax_chart = figure.add_subplot(111)
-    ax_chart.set_facecolor(PANEL)
-
-    # Detect the current Wi-Fi channel correctly.
-    # macOS may report it as "5g161/80", where 161 is the channel.
-    current_num = None
-    if current_channel:
-        try:
-            match = re.search(r"g(\d+)", str(current_channel), re.IGNORECASE)
-            if match:
-                current_num = int(match.group(1))
-            else:
-                match = re.search(r"\b(\d+)\b", str(current_channel))
-                if match:
-                    current_num = int(match.group(1))
-        except Exception:
-            current_num = None
-
-    x_positions = list(range(len(channel_numbers)))
-    bar_colors = [
-        CYAN if ch == current_num else "#287FB8"
-        for ch in channel_numbers
-    ]
-
-    bars = ax_chart.bar(
-        x_positions,
-        counts,
-        color=bar_colors
-    )
-
-    ax_chart.set_xticks(x_positions)
-    ax_chart.set_xticklabels(
-        [str(ch) for ch in channel_numbers]
-    )
-
-    # Put the current-channel marker above the bar and expand the
-    # y-axis so it can never be clipped.
-    if current_num in channel_numbers:
-        index = channel_numbers.index(current_num)
-        top = max(counts) if counts else 1
-        ax_chart.set_ylim(0, top + 1.0)
-        ax_chart.annotate(
-            "YOU",
-            (index, counts[index]),
-            xytext=(0, 12),
-            textcoords="offset points",
-            ha="center",
-            va="bottom",
-            fontsize=9,
-            color=CYAN,
-            fontweight="bold",
-            arrowprops=dict(
-                arrowstyle="->",
-                color=CYAN,
-                lw=1.5
-            )
-        )
-
-    ax_chart.set_xlabel(
-        "Wi-Fi Channel",
-        color=WHITE,
-        fontsize=8
-    )
-    ax_chart.set_ylabel(
-        "Networks",
-        color=WHITE,
-        fontsize=8
-    )
-
-    ax_chart.tick_params(
-        axis="x",
-        colors=WHITE,
-        labelsize=8
-    )
-    ax_chart.tick_params(
-        axis="y",
-        colors=WHITE,
-        labelsize=8
-    )
-
-    ax_chart.grid(
-        axis="y",
-        alpha=0.18
-    )
-
-    for spine in ax_chart.spines.values():
-        spine.set_color("#444444")
-
-    figure.tight_layout(pad=1.0)
-
-    canvas_chart = FigureCanvasTkAgg(
-        figure,
-        master=parent
-    )
-    canvas_chart.get_tk_widget().pack(
-        fill="x",
-        padx=12,
-        pady=(0, 6)
-    )
-
-    return canvas_chart
-
-def open_scanner():
-    win = tk.Toplevel(root)
-    win.title("📡 Wi-Fi Environment Scanner")
-    win.geometry("1050x820")
-    win.configure(bg=BG)
-
-    tk.Label(
-        win,
-        text="📡 WI-FI ENVIRONMENT",
-        font=("Helvetica", 22, "bold"),
-        fg=CYAN,
-        bg=BG
-    ).pack(pady=(15, 5))
-
-    container = tk.Frame(win, bg=PANEL)
-    container.pack(fill="both", expand=True, padx=20, pady=10)
-
-    columns = ("ssid", "channel", "band", "signal", "security")
-
-    tree = ttk.Treeview(
-        container,
-        columns=columns,
-        show="headings"
-    )
-
-    headings = {
-        "ssid": "SSID",
-        "channel": "CHANNEL",
-        "band": "BAND",
-        "signal": "SIGNAL",
-        "security": "SECURITY"
-    }
-
-    widths = {
-        "ssid": 300,
-        "channel": 120,
-        "band": 150,
-        "signal": 140,
-        "security": 220
-    }
-
-    for c in columns:
-        tree.heading(c, text=headings[c])
-        tree.column(c, width=widths[c], anchor="center")
-
-    tree.pack(fill="both", expand=True, padx=10, pady=(10, 5))
-
-    chart_frame = tk.Frame(
-        win,
-        bg=PANEL
-    )
-    chart_frame.pack(
-        fill="x",
-        padx=20,
-        pady=(0, 4)
-    )
-
-    result_label = tk.Label(
-        win,
-        text="Channel congestion will appear below the scan results.",
-        font=("Helvetica", 10, "bold"),
-        fg=CYAN,
-        bg=BG
-    )
-    result_label.pack(pady=(0, 5))
-
-    def do_scan():
-        result_label.config(text="🔄 Scanning...")
-        win.update_idletasks()
-
-        for item in tree.get_children():
-            tree.delete(item)
-
-        nets = scan_networks()
-
-        for n in nets:
-            tree.insert(
-                "",
-                "end",
-                values=(
-                    n["ssid"],
-                    n["channel"],
-                    n["band"],
-                    f"{n['signal']} dBm",
-                    n["security"]
-                )
-            )
-
-        for widget in chart_frame.winfo_children():
-            widget.destroy()
-
-        current_channel = None
-        try:
-            current_data = get_wifi_info()
-            if current_data:
-                current_channel = current_data.get("channel")
-        except Exception:
-            pass
-
-        show_channel_chart(
-            chart_frame,
-            nets,
-            current_channel
-        )
-
-        rec = recommended_channel(nets)
-
-        if rec is not None:
-            channels = channel_analysis(nets)
-            count = len(channels[rec])
-
-            if count <= 1:
-                state = "🟢 LOW"
-            elif count == 2:
-                state = "🟡 MEDIUM"
-            else:
-                state = "🔴 HIGH"
-
-            result_label.config(
-                text=(
-                    f"💡 Recommended Channel: {rec}   •   "
-                    f"{state} congestion   •   "
-                    f"{len(nets)} networks found"
-                )
-            )
-        else:
-            result_label.config(
-                text=f"{len(nets)} networks found"
-            )
-
-    tk.Button(
-        win,
-        text="🔍 SCAN NETWORKS",
-        command=do_scan,
-        font=("Helvetica", 11, "bold"),
-        fg="white",
-        bg="#1c6575",
-        activebackground="#24859a",
-        relief="flat",
-        padx=20,
-        pady=7
-    ).pack(pady=(0, 12))
-
-    do_scan()
-
+def launch_scanner():
+    open_scanner()
 
 scan_button = tk.Button(
-    root,
-    text="🔍 SCAN NEARBY NETWORKS",
-    command=open_scanner,
-    font=("Helvetica", 11, "bold"),
-    fg="white",
-    bg="#1c6575",
-    activebackground="#24859a",
+    header,
+    text="SCAN WI-FI",
+    command=launch_scanner,
+    font=("Helvetica", 9, "bold"),
+    fg=BG,
+    bg=CYAN,
+    activebackground="#55efff",
+    activeforeground=BG,
     relief="flat",
-    padx=18,
-    pady=6
+    bd=0,
+    padx=16,
+    pady=8,
+    cursor="hand2",
 )
-scan_button.pack(pady=(3, 8))
+scan_button.pack(side="right", padx=(12, 0), pady=4)
 
+status = tk.Label(header, text="●  CONNECTING", font=("Helvetica", 9, "bold"),
+                  fg=YELLOW, bg=BG)
+status.pack(side="right", pady=8)
 
-# ============================================================
-# TOP CONTENT: LEFT INFO + GRAPH
-# ============================================================
+# Metrics row
+metrics = tk.Frame(root, bg=BG)
+metrics.pack(fill="x", padx=28, pady=(2, 12))
 
-top = tk.Frame(root, bg=BG)
-top.pack(fill="both", expand=True, padx=15, pady=(0, 8))
+def metric_card(title, subtitle):
+    f = card(metrics)
+    f.pack(side="left", fill="both", expand=True, padx=5)
+    make_label(f, title.upper(), 8, True, MUTED).pack(anchor="w", padx=16, pady=(13,2))
+    v = make_label(f, "--", 21, True, WHITE)
+    v.pack(anchor="w", padx=16)
+    make_label(f, subtitle, 8, False, MUTED).pack(anchor="w", padx=16, pady=(1,12))
+    return v
 
-left = tk.Frame(
-    top,
-    bg=PANEL,
-    width=285
-)
-left.pack(side="left", fill="y", padx=(0, 12))
+signal_metric = metric_card("Signal", "dBm")
+snr_metric = metric_card("SNR", "signal-to-noise")
+channel_metric = metric_card("Channel", "current channel")
+health_metric = metric_card("Health", "connection score")
+
+# Main content
+content = tk.Frame(root, bg=BG)
+content.pack(fill="both", expand=True, padx=28, pady=(0, 12))
+
+left = card(content, width=300)
+left.pack(side="left", fill="y", padx=(0,10))
 left.pack_propagate(False)
 
-right = tk.Frame(
-    top,
-    bg=PANEL
-)
-right.pack(side="left", fill="both", expand=True)
-
-
-# ============================================================
-# COMPACT INFO PANEL
-# ============================================================
-
-tk.Label(
-    left,
-    text="CONNECTION",
-    font=("Helvetica", 13, "bold"),
-    fg=CYAN,
-    bg=PANEL
-).pack(anchor="w", padx=15, pady=(10, 5))
-
-
+make_label(left, "CONNECTION", 11, True, CYAN).pack(anchor="w", padx=18, pady=(14,7))
 info_values = {}
 
-
 def add_info(name):
-    f = tk.Frame(left, bg=PANEL)
-    f.pack(fill="x", padx=15, pady=1)
-
-    tk.Label(
-        f,
-        text=name,
-        font=("Helvetica", 9),
-        fg=MUTED,
-        bg=PANEL
-    ).pack(anchor="w")
-
-    v = tk.Label(
-        f,
-        text="--",
-        font=("Helvetica", 12, "bold"),
-        fg=WHITE,
-        bg=PANEL
-    )
+    row = tk.Frame(left, bg=PANEL)
+    row.pack(fill="x", padx=18, pady=3)
+    make_label(row, name, 8, True, MUTED).pack(anchor="w")
+    v = make_label(row, "--", 12, True, WHITE)
     v.pack(anchor="w")
-
     info_values[name] = v
 
-
-for name in (
-    "Signal",
-    "Noise",
-    "SNR",
-    "Channel",
-    "Band",
-    "Tx Rate",
-    "Wi-Fi Standard"
-):
+for name in ("Signal","Noise","SNR","Channel","Band","Tx Rate","Wi-Fi Standard"):
     add_info(name)
 
+tk.Frame(left, bg=BORDER, height=1).pack(fill="x", padx=18, pady=8)
+make_label(left, "SIGNAL QUALITY", 10, True, CYAN).pack(anchor="w", padx=18)
+quality_label = make_label(left, "--", 18, True, WHITE)
+quality_label.pack(anchor="w", padx=18, pady=(3,0))
+snr_quality_label = make_label(left, "SNR: --", 9, True, MUTED)
+snr_quality_label.pack(anchor="w", padx=18, pady=(2,7))
 
-tk.Label(
-    left,
-    text="SIGNAL QUALITY",
-    font=("Helvetica", 13, "bold"),
-    fg=CYAN,
-    bg=PANEL
-).pack(anchor="w", padx=15, pady=(8, 2))
+right = card(content)
+right.pack(side="left", fill="both", expand=True)
 
+gh = tk.Frame(right, bg=PANEL)
+gh.pack(fill="x", padx=18, pady=(15,0))
+make_label(gh, "SIGNAL HISTORY", 11, True, WHITE).pack(side="left")
+make_label(gh, "LIVE", 8, True, CYAN).pack(side="right")
 
-quality_label = tk.Label(
-    left,
-    text="--",
-    font=("Helvetica", 16, "bold"),
-    fg=WHITE,
-    bg=PANEL
-)
-quality_label.pack(anchor="w", padx=15)
-
-
-snr_quality_label = tk.Label(
-    left,
-    text="SNR: --",
-    font=("Helvetica", 9, "bold"),
-    fg=CYAN,
-    bg=PANEL
-)
-snr_quality_label.pack(anchor="w", padx=15, pady=(1, 5))
-
-
-# ============================================================
-# GRAPH
-# ============================================================
-
-figure = Figure(figsize=(8, 4.7), dpi=100)
+figure = Figure(figsize=(8,4.7), dpi=100)
 figure.patch.set_facecolor(PANEL)
-
 ax = figure.add_subplot(111)
 ax.set_facecolor(PANEL)
-ax.set_ylim(-100, -30)
-ax.set_xlabel("Elapsed Time", color=WHITE)
-ax.set_ylabel("dBm", color=WHITE)
-ax.tick_params(colors=WHITE)
-ax.grid(True, alpha=0.18)
-
+ax.set_ylim(-100,-30)
+ax.set_xlabel("Elapsed Time", color=MUTED, fontsize=8)
+ax.set_ylabel("dBm", color=MUTED, fontsize=8)
+ax.tick_params(colors=MUTED, labelsize=8)
+ax.grid(True, alpha=0.12)
 for spine in ax.spines.values():
-    spine.set_color("#444444")
-
-signal_line, = ax.plot(
-    [], [],
-    marker="o",
-    linewidth=2,
-    label="Signal"
-)
-
-noise_line, = ax.plot(
-    [], [],
-    marker="o",
-    linewidth=2,
-    label="Noise"
-)
-
-legend = ax.legend()
-legend.get_frame().set_facecolor(PANEL)
-
+    spine.set_color(BORDER)
+signal_line, = ax.plot([], [], linewidth=2.5, label="Signal", color=CYAN)
+noise_line, = ax.plot([], [], linewidth=2, label="Noise", color="#4d6375")
+legend = ax.legend(loc="upper right", frameon=False)
 for t in legend.get_texts():
     t.set_color(WHITE)
+canvas = FigureCanvasTkAgg(figure, master=right)
+canvas.get_tk_widget().pack(fill="both", expand=True, padx=12, pady=10)
 
-canvas = FigureCanvasTkAgg(
-    figure,
-    master=right
-)
-canvas.get_tk_widget().pack(
-    fill="both",
-    expand=True,
-    padx=5,
-    pady=5
-)
-
-
-# ============================================================
-# BOTTOM COMPACT PANELS
-# ============================================================
-
+# Bottom cards
 bottom = tk.Frame(root, bg=BG)
-bottom.pack(fill="x", padx=15, pady=(0, 10))
+bottom.pack(fill="x", padx=28, pady=(0,12))
+performance = card(bottom); performance.pack(side="left", fill="both", expand=True, padx=(0,5))
+analysis = card(bottom); analysis.pack(side="left", fill="both", expand=True, padx=(5,0))
 
+make_label(performance, "NETWORK PERFORMANCE", 9, True, CYAN).pack(anchor="w", padx=15, pady=(12,3))
+performance_label = make_label(performance, "Testing internet latency...", 11, True, WHITE)
+performance_label.pack(anchor="w", padx=15, pady=(0,12))
 
-performance = tk.Frame(bottom, bg=PANEL)
-performance.pack(
-    side="left",
-    fill="both",
-    expand=True,
-    padx=(0, 6)
-)
+make_label(analysis, "CONNECTION ANALYSIS", 9, True, CYAN).pack(anchor="w", padx=15, pady=(12,3))
+health_label = make_label(analysis, "Health Score: --", 12, True, WHITE)
+health_label.pack(anchor="w", padx=15)
+details_label = make_label(analysis, "Signal --%  •  Noise --%  •  SNR --%  •  Stability --%", 8, False, MUTED)
+details_label.pack(anchor="w", padx=15, pady=(2,0))
+recommendation_label = make_label(analysis, "Analyzing...", 8, True, WHITE)
+recommendation_label.pack(anchor="w", padx=15, pady=(2,11))
 
-analysis = tk.Frame(bottom, bg=PANEL)
-analysis.pack(
-    side="left",
-    fill="both",
-    expand=True,
-    padx=(6, 0)
-)
+def show_channel_chart(parent, networks, current_channel=None):
+    channels = channel_analysis(networks)
+    if not channels:
+        make_label(parent, "No channel data available", 10, True, MUTED, PANEL).pack(pady=20)
+        return
+    rows = sorted(channels.items())
+    nums = [c for c,_ in rows]; counts=[len(n) for _,n in rows]
+    fig=Figure(figsize=(8.8,2.35),dpi=90); fig.patch.set_facecolor(PANEL)
+    a=fig.add_subplot(111); a.set_facecolor(PANEL)
+    current_num=None
+    if current_channel:
+        m=re.search(r"g(\d+)",str(current_channel),re.I) or re.search(r"\b(\d+)\b",str(current_channel))
+        if m: current_num=int(m.group(1))
+    x=list(range(len(nums)))
+    a.bar(x,counts,color=[CYAN if c==current_num else "#287FB8" for c in nums],width=.65)
+    a.set_xticks(x); a.set_xticklabels([str(c) for c in nums])
+    a.tick_params(axis="x",colors=WHITE,labelsize=8); a.tick_params(axis="y",colors=MUTED,labelsize=8)
+    a.set_ylabel("Networks",color=MUTED,fontsize=8); a.set_xlabel("Wi-Fi Channel",color=MUTED,fontsize=8)
+    a.grid(axis="y",alpha=.12)
+    for s in a.spines.values(): s.set_color(BORDER)
+    if current_num in nums:
+        i=nums.index(current_num); a.set_ylim(0,max(counts)+1.2)
+        a.annotate("YOU",(i,counts[i]),xytext=(0,12),textcoords="offset points",
+                   ha="center",color=CYAN,fontsize=8,fontweight="bold",
+                   arrowprops=dict(arrowstyle="->",color=CYAN,lw=1.3))
+    fig.tight_layout(pad=1)
+    c=FigureCanvasTkAgg(fig,master=parent); c.get_tk_widget().pack(fill="x",padx=14,pady=(0,10))
+    return c
 
-
-# Performance
-tk.Label(
-    performance,
-    text="NETWORK PERFORMANCE",
-    font=("Helvetica", 11, "bold"),
-    fg=CYAN,
-    bg=PANEL
-).pack(anchor="w", padx=12, pady=(7, 2))
-
-performance_label = tk.Label(
-    performance,
-    text="🔄 Testing...",
-    font=("Helvetica", 11, "bold"),
-    fg=WHITE,
-    bg=PANEL
-)
-performance_label.pack(anchor="w", padx=12, pady=(0, 7))
-
-
-# Analysis
-tk.Label(
-    analysis,
-    text="CONNECTION ANALYSIS",
-    font=("Helvetica", 11, "bold"),
-    fg=CYAN,
-    bg=PANEL
-).pack(anchor="w", padx=12, pady=(7, 2))
-
-health_label = tk.Label(
-    analysis,
-    text="Health Score: --",
-    font=("Helvetica", 13, "bold"),
-    fg=CYAN,
-    bg=PANEL
-)
-health_label.pack(anchor="w", padx=12)
-
-details_label = tk.Label(
-    analysis,
-    text="Signal --%  •  Noise --%  •  SNR --%  •  Stability --%",
-    font=("Helvetica", 9),
-    fg=MUTED,
-    bg=PANEL
-)
-details_label.pack(anchor="w", padx=12, pady=(1, 2))
-
-recommendation_label = tk.Label(
-    analysis,
-    text="Analyzing...",
-    font=("Helvetica", 9, "bold"),
-    fg=WHITE,
-    bg=PANEL
-)
-recommendation_label.pack(anchor="w", padx=12, pady=(0, 7))
-
-
-# ============================================================
-# LIVE UPDATE
-# ============================================================
+def open_scanner():
+    win=tk.Toplevel(root); win.title("Wi-Fi Environment"); win.geometry("1100x820"); win.configure(bg=BG)
+    bar=tk.Frame(win,bg=BG); bar.pack(fill="x",padx=24,pady=(22,10))
+    tk.Label(bar,text="Wi-Fi Environment",font=("Helvetica",22,"bold"),fg=WHITE,bg=BG).pack(side="left")
+    result_label=tk.Label(bar,text="Ready to scan",font=("Helvetica",10,"bold"),fg=CYAN,bg=BG); result_label.pack(side="right")
+    container=card(win); container.pack(fill="both",expand=True,padx=24,pady=8)
+    cols=("ssid","channel","band","signal","security")
+    tree=ttk.Treeview(container,columns=cols,show="headings",style="Modern.Treeview")
+    heads={"ssid":"NETWORK","channel":"CHANNEL","band":"BAND","signal":"SIGNAL","security":"SECURITY"}
+    widths={"ssid":330,"channel":140,"band":150,"signal":150,"security":220}
+    for c in cols: tree.heading(c,text=heads[c]); tree.column(c,width=widths[c],anchor="center")
+    tree.pack(fill="both",expand=True,padx=12,pady=12)
+    chart_card=card(win); chart_card.pack(fill="x",padx=24,pady=(0,8))
+    make_label(chart_card,"CHANNEL CONGESTION",10,True,CYAN).pack(anchor="w",padx=14,pady=(10,2))
+    chart_frame=tk.Frame(chart_card,bg=PANEL); chart_frame.pack(fill="x")
+    def do_scan():
+        result_label.config(text="SCANNING..."); win.update_idletasks()
+        for i in tree.get_children(): tree.delete(i)
+        nets=scan_networks()
+        for n in nets:
+            tree.insert("", "end", values=(n["ssid"],n["channel"],n["band"],f"{n['signal']} dBm",n["security"]))
+        for w in chart_frame.winfo_children(): w.destroy()
+        current=None
+        try:
+            d=get_wifi_info()
+            if d: current=d.get("channel")
+        except Exception: pass
+        show_channel_chart(chart_frame,nets,current)
+        rec=recommended_channel(nets)
+        if rec is not None:
+            count=len(channel_analysis(nets)[rec])
+            state="LOW" if count<=1 else ("MEDIUM" if count==2 else "HIGH")
+            result_label.config(text=f"RECOMMENDED CHANNEL  {rec}   •   {state} CONGESTION   •   {len(nets)} NETWORKS")
+        else: result_label.config(text=f"{len(nets)} NETWORKS FOUND")
+    tk.Button(win,text="SCAN NEARBY NETWORKS",command=do_scan,font=("Helvetica",10,"bold"),
+              fg=BG,bg=CYAN,activebackground="#55efff",activeforeground=BG,relief="flat",
+              bd=0,padx=24,pady=10,cursor="hand2").pack(pady=(4,18))
+    do_scan()
 
 def update_dashboard():
-    data = get_wifi_info()
-
+    data=get_wifi_info()
     if not data:
-        status.config(text="⚠️ Unable to read Wi-Fi information")
-        root.after(UPDATE_MS, update_dashboard)
-        return
-
-    try:
-        rssi = int(re.findall(r"-?\d+", data["rssi"])[0])
-    except Exception:
-        rssi = -100
-
-    try:
-        noise = int(re.findall(r"-?\d+", data["noise"])[0])
-    except Exception:
-        noise = -90
-
-    snr = rssi - noise
-
-    elapsed = int(time.time() - start_time)
-
-    signal_history.append(rssi)
-    noise_history.append(noise)
-    elapsed_history.append(elapsed)
-
-    sp = max(0, min(100, signal_percent(rssi)))
-    np = max(0, min(100, noise_percent(noise)))
-    snrp = snr_percent(snr)
-
-    if len(signal_history) >= 2:
-        variation = max(signal_history) - min(signal_history)
-        stability = max(0, min(100, 100 - variation * 6))
-    else:
-        stability = 100
-
-    health = int(
-        sp * 0.35 +
-        np * 0.20 +
-        snrp * 0.30 +
-        stability * 0.15
-    )
-
-    q, icon = quality(rssi)
-    sq, sicon = snr_quality(snr)
-
-    info_values["Signal"].config(text=f"{rssi} dBm")
-    info_values["Noise"].config(text=f"{noise} dBm")
-    info_values["SNR"].config(text=f"{snr} dB")
-    info_values["Channel"].config(text=data["channel"])
-    info_values["Band"].config(
-        text=band_from_channel(data["channel"])
-    )
-    info_values["Tx Rate"].config(text=data["tx"])
-    info_values["Wi-Fi Standard"].config(text=data["phy"])
-
-    quality_label.config(
-        text=f"{icon} {q}"
-    )
-
-    snr_quality_label.config(
-        text=f"{sicon} SNR: {snr} dB — {sq}"
-    )
-
-    # Graph
-    x = list(range(len(signal_history)))
-
-    signal_line.set_data(
-        x,
-        list(signal_history)
-    )
-    noise_line.set_data(
-        x,
-        list(noise_history)
-    )
-
-    ax.set_xlim(
-        0,
-        max(10, len(signal_history) - 1)
-    )
-
-    if len(elapsed_history) > 1:
-        positions = list(range(
-            0,
-            len(elapsed_history),
-            max(1, len(elapsed_history) // 5)
-        ))
-
-        if positions[-1] != len(elapsed_history) - 1:
-            positions.append(
-                len(elapsed_history) - 1
-            )
-
-        ax.set_xticks(positions)
-        ax.set_xticklabels(
-            [
-                f"{list(elapsed_history)[i]}s"
-                for i in positions
-            ],
-            color=WHITE
-        )
-
+        status.config(text="●  WIFI UNAVAILABLE",fg=RED)
+        root.after(UPDATE_MS,update_dashboard); return
+    try: rssi=int(re.findall(r"-?\d+",data["rssi"])[0])
+    except Exception: rssi=-100
+    try: noise=int(re.findall(r"-?\d+",data["noise"])[0])
+    except Exception: noise=-90
+    snr=rssi-noise; elapsed=int(time.time()-start_time)
+    signal_history.append(rssi); noise_history.append(noise); elapsed_history.append(elapsed)
+    sp=max(0,min(100,signal_percent(rssi))); np=max(0,min(100,noise_percent(noise))); snrp=snr_percent(snr)
+    if len(signal_history)>=2:
+        variation=max(signal_history)-min(signal_history); stability=max(0,min(100,100-variation*6))
+    else: stability=100
+    health=int(sp*.35+np*.20+snrp*.30+stability*.15)
+    q,icon=quality(rssi); sq,sicon=snr_quality(snr)
+    signal_metric.config(text=f"{rssi} dBm"); snr_metric.config(text=f"{snr} dB")
+    channel_metric.config(text=data["channel"]); health_metric.config(text=f"{health}/100")
+    info_values["Signal"].config(text=f"{rssi} dBm"); info_values["Noise"].config(text=f"{noise} dBm")
+    info_values["SNR"].config(text=f"{snr} dB"); info_values["Channel"].config(text=data["channel"])
+    info_values["Band"].config(text=band_from_channel(data["channel"]))
+    info_values["Tx Rate"].config(text=data["tx"]); info_values["Wi-Fi Standard"].config(text=data["phy"])
+    quality_label.config(text=f"{icon} {q}"); snr_quality_label.config(text=f"{sicon} SNR {snr} dB  •  {sq}")
+    x=list(range(len(signal_history))); signal_line.set_data(x,list(signal_history)); noise_line.set_data(x,list(noise_history))
+    ax.set_xlim(0,max(10,len(signal_history)-1))
+    if len(elapsed_history)>1:
+        pos=list(range(0,len(elapsed_history),max(1,len(elapsed_history)//5)))
+        if pos[-1]!=len(elapsed_history)-1: pos.append(len(elapsed_history)-1)
+        ax.set_xticks(pos); ax.set_xticklabels([f"{list(elapsed_history)[i]}s" for i in pos],color=MUTED)
     canvas.draw_idle()
-
-    # Ping
     if ping_history:
-        current = ping_history[-1]
-        average = sum(ping_history) / len(ping_history)
-
-        if len(ping_history) >= 2:
-            jitter = sum(
-                abs(
-                    ping_history[i] -
-                    ping_history[i - 1]
-                )
-                for i in range(1, len(ping_history))
-            ) / (len(ping_history) - 1)
-        else:
-            jitter = 0
-
-        loss = (
-            max(
-                0,
-                1 - ping_success / ping_total
-            ) * 100
-            if ping_total else 0
-        )
-
-        if current < 30:
-            ping_icon = "🟢"
-        elif current < 70:
-            ping_icon = "🟡"
-        else:
-            ping_icon = "🔴"
-
-        performance_label.config(
-            text=(
-                f"{ping_icon} Ping {current:.1f} ms  •  "
-                f"Avg {average:.1f} ms  •  "
-                f"Jitter {jitter:.1f} ms  •  "
-                f"Loss {loss:.1f}%"
-            )
-        )
-
-    else:
-        performance_label.config(
-            text="🔄 Testing internet latency..."
-        )
-
-    # Health
-    if health >= 75:
-        health_icon = "🟢"
-        msg = "Good wireless conditions"
-    elif health >= 50:
-        health_icon = "🟡"
-        msg = "Connection is acceptable"
-    else:
-        health_icon = "🔴"
-        msg = "Poor wireless conditions"
-
-    health_label.config(
-        text=f"{health_icon} Health Score: {health}/100  |  {health}%"
-    )
-
-    details_label.config(
-        text=(
-            f"Signal {sp}%  •  "
-            f"Noise {np}%  •  "
-            f"SNR {snrp}%  •  "
-            f"Stability {stability}%"
-        )
-    )
-
-    recommendation_label.config(
-        text=f"{health_icon} {msg}"
-    )
-
-    status.config(text="Connected")
-
-    root.after(
-        UPDATE_MS,
-        update_dashboard
-    )
-
-
-# ============================================================
-# START
-# ============================================================
+        current=ping_history[-1]; average=sum(ping_history)/len(ping_history)
+        jitter=(sum(abs(ping_history[i]-ping_history[i-1]) for i in range(1,len(ping_history)))/(len(ping_history)-1)) if len(ping_history)>=2 else 0
+        loss=(max(0,1-ping_success/ping_total)*100) if ping_total else 0
+        performance_label.config(text=f"●  Ping {current:.1f} ms   •   Avg {average:.1f} ms   •   Jitter {jitter:.1f} ms   •   Loss {loss:.1f}%")
+    else: performance_label.config(text="Testing internet latency...")
+    health_icon="●"; msg="Good wireless conditions" if health>=75 else ("Connection is acceptable" if health>=50 else "Poor wireless conditions")
+    health_label.config(text=f"{health_icon}  Health Score: {health}/100")
+    details_label.config(text=f"Signal {sp}%  •  Noise {np}%  •  SNR {snrp}%  •  Stability {stability}%")
+    recommendation_label.config(text=f"{health_icon}  {msg}")
+    status.config(text="●  CONNECTED",fg=GREEN)
+    root.after(UPDATE_MS,update_dashboard)
 
 update_dashboard()
 root.mainloop()
