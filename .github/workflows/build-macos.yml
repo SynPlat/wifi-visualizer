@@ -37,7 +37,7 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build Python application
+      - name: Build Wi-Fi Visualizer
         run: |
           rm -rf build dist
           pyinstaller \
@@ -47,10 +47,8 @@ jobs:
             --name "Wi-Fi Visualizer" \
             dashboard.py
 
-      - name: Create administrator launcher app
+      - name: Create launcher
         run: |
-          rm -rf "Wi-Fi Visualizer Launcher.app"
-
           cat > launcher.applescript <<'APPLESCRIPT'
           set appPath to (POSIX path of (path to me)) & "Contents/Resources/Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer"
           do shell script quoted form of appPath with administrator privileges
@@ -60,14 +58,18 @@ jobs:
             -o "Wi-Fi Visualizer Launcher.app" \
             launcher.applescript
 
-          mkdir -p "Wi-Fi Visualizer Launcher.app/Contents/Resources"
+      - name: Package launcher and dashboard
+        run: |
+          mkdir -p \
+            "Wi-Fi Visualizer Launcher.app/Contents/Resources"
 
           cp -R \
             "dist/Wi-Fi Visualizer.app" \
             "Wi-Fi Visualizer Launcher.app/Contents/Resources/"
 
-      - name: Rename launcher
-        run: |
+          rm -rf dist
+          mkdir dist
+
           mv \
             "Wi-Fi Visualizer Launcher.app" \
             "dist/Wi-Fi Visualizer.app"
@@ -78,7 +80,7 @@ jobs:
           zip -r "../WiFi-Visualizer-macOS-${{ matrix.arch }}.zip" \
             "Wi-Fi Visualizer.app"
 
-      - name: Upload application
+      - name: Upload build
         uses: actions/upload-artifact@v4
         with:
           name: WiFi-Visualizer-macOS-${{ matrix.arch }}
@@ -92,13 +94,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download built apps
+      - name: Download builds
         uses: actions/download-artifact@v4
         with:
           path: release-files
           merge-multiple: true
 
-      - name: Create GitHub Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
