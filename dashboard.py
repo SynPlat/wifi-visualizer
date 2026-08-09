@@ -354,10 +354,137 @@ status.pack(pady=(0, 5))
 # SCAN BUTTON
 # ============================================================
 
+
+def show_channel_chart(parent, networks, current_channel=None):
+    """Show a compact visual channel-congestion chart."""
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+    channels = channel_analysis(networks)
+
+    if not channels:
+        tk.Label(
+            parent,
+            text="No channel data available",
+            font=("Helvetica", 10, "bold"),
+            fg=MUTED,
+            bg=PANEL
+        ).pack(pady=8)
+        return
+
+    rows = sorted(channels.items())
+    channel_numbers = [ch for ch, _ in rows]
+    counts = [len(nets) for _, nets in rows]
+
+    figure = Figure(figsize=(8.8, 2.15), dpi=90)
+    figure.patch.set_facecolor(PANEL)
+
+    ax_chart = figure.add_subplot(111)
+    ax_chart.set_facecolor(PANEL)
+
+    # Detect the current Wi-Fi channel correctly.
+    # macOS may report it as "5g161/80", where 161 is the channel.
+    current_num = None
+    if current_channel:
+        try:
+            match = re.search(r"g(\d+)", str(current_channel), re.IGNORECASE)
+            if match:
+                current_num = int(match.group(1))
+            else:
+                match = re.search(r"\b(\d+)\b", str(current_channel))
+                if match:
+                    current_num = int(match.group(1))
+        except Exception:
+            current_num = None
+
+    x_positions = list(range(len(channel_numbers)))
+    bar_colors = [
+        CYAN if ch == current_num else "#287FB8"
+        for ch in channel_numbers
+    ]
+
+    bars = ax_chart.bar(
+        x_positions,
+        counts,
+        color=bar_colors
+    )
+
+    ax_chart.set_xticks(x_positions)
+    ax_chart.set_xticklabels(
+        [str(ch) for ch in channel_numbers]
+    )
+
+    # Put the current-channel marker above the bar and expand the
+    # y-axis so it can never be clipped.
+    if current_num in channel_numbers:
+        index = channel_numbers.index(current_num)
+        top = max(counts) if counts else 1
+        ax_chart.set_ylim(0, top + 1.0)
+        ax_chart.annotate(
+            "YOU",
+            (index, counts[index]),
+            xytext=(0, 12),
+            textcoords="offset points",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            color=CYAN,
+            fontweight="bold",
+            arrowprops=dict(
+                arrowstyle="->",
+                color=CYAN,
+                lw=1.5
+            )
+        )
+
+    ax_chart.set_xlabel(
+        "Wi-Fi Channel",
+        color=WHITE,
+        fontsize=8
+    )
+    ax_chart.set_ylabel(
+        "Networks",
+        color=WHITE,
+        fontsize=8
+    )
+
+    ax_chart.tick_params(
+        axis="x",
+        colors=WHITE,
+        labelsize=8
+    )
+    ax_chart.tick_params(
+        axis="y",
+        colors=WHITE,
+        labelsize=8
+    )
+
+    ax_chart.grid(
+        axis="y",
+        alpha=0.18
+    )
+
+    for spine in ax_chart.spines.values():
+        spine.set_color("#444444")
+
+    figure.tight_layout(pad=1.0)
+
+    canvas_chart = FigureCanvasTkAgg(
+        figure,
+        master=parent
+    )
+    canvas_chart.get_tk_widget().pack(
+        fill="x",
+        padx=12,
+        pady=(0, 6)
+    )
+
+    return canvas_chart
+
 def open_scanner():
     win = tk.Toplevel(root)
     win.title("📡 Wi-Fi Environment Scanner")
-    win.geometry("1050x700")
+    win.geometry("1050x820")
     win.configure(bg=BG)
 
     tk.Label(
@@ -399,12 +526,22 @@ def open_scanner():
         tree.heading(c, text=headings[c])
         tree.column(c, width=widths[c], anchor="center")
 
-    tree.pack(fill="both", expand=True, padx=10, pady=10)
+    tree.pack(fill="both", expand=True, padx=10, pady=(10, 5))
+
+    chart_frame = tk.Frame(
+        win,
+        bg=PANEL
+    )
+    chart_frame.pack(
+        fill="x",
+        padx=20,
+        pady=(0, 4)
+    )
 
     result_label = tk.Label(
         win,
-        text="",
-        font=("Helvetica", 11, "bold"),
+        text="Channel congestion will appear below the scan results.",
+        font=("Helvetica", 10, "bold"),
         fg=CYAN,
         bg=BG
     )
@@ -431,6 +568,23 @@ def open_scanner():
                     n["security"]
                 )
             )
+
+        for widget in chart_frame.winfo_children():
+            widget.destroy()
+
+        current_channel = None
+        try:
+            current_data = get_wifi_info()
+            if current_data:
+                current_channel = current_data.get("channel")
+        except Exception:
+            pass
+
+        show_channel_chart(
+            chart_frame,
+            nets,
+            current_channel
+        )
 
         rec = recommended_channel(nets)
 
