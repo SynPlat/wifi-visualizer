@@ -48,21 +48,22 @@ jobs:
             --name "Wi-Fi Visualizer" \
             dashboard.py
 
-      - name: Create launcher
+      - name: Create working launcher
         run: |
           cat > "Wi-Fi Visualizer.command" <<'LAUNCHER'
           #!/bin/bash
 
           SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-          sudo -v || exit 1
+          cd "$SCRIPT_DIR" || exit 1
 
-          exec sudo "$SCRIPT_DIR/Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer"
+          sudo -k
+          sudo "$SCRIPT_DIR/Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer"
           LAUNCHER
 
           chmod +x "Wi-Fi Visualizer.command"
 
-      - name: Create distribution folder
+      - name: Create distribution
         run: |
           mkdir -p "Wi-Fi Visualizer"
 
