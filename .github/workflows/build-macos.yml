@@ -37,8 +37,9 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build application
+      - name: Build Python application
         run: |
+          rm -rf build dist
           pyinstaller \
             --noconfirm \
             --clean \
@@ -46,10 +47,36 @@ jobs:
             --name "Wi-Fi Visualizer" \
             dashboard.py
 
+      - name: Create administrator launcher app
+        run: |
+          rm -rf "Wi-Fi Visualizer Launcher.app"
+
+          cat > launcher.applescript <<'APPLESCRIPT'
+          set appPath to (POSIX path of (path to me)) & "Contents/Resources/Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer"
+          do shell script quoted form of appPath with administrator privileges
+          APPLESCRIPT
+
+          osacompile \
+            -o "Wi-Fi Visualizer Launcher.app" \
+            launcher.applescript
+
+          mkdir -p "Wi-Fi Visualizer Launcher.app/Contents/Resources"
+
+          cp -R \
+            "dist/Wi-Fi Visualizer.app" \
+            "Wi-Fi Visualizer Launcher.app/Contents/Resources/"
+
+      - name: Rename launcher
+        run: |
+          mv \
+            "Wi-Fi Visualizer Launcher.app" \
+            "dist/Wi-Fi Visualizer.app"
+
       - name: Create ZIP
         run: |
           cd dist
-          zip -r "../WiFi-Visualizer-macOS-${{ matrix.arch }}.zip" "Wi-Fi Visualizer.app"
+          zip -r "../WiFi-Visualizer-macOS-${{ matrix.arch }}.zip" \
+            "Wi-Fi Visualizer.app"
 
       - name: Upload application
         uses: actions/upload-artifact@v4
@@ -71,7 +98,7 @@ jobs:
           path: release-files
           merge-multiple: true
 
-      - name: Create release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
