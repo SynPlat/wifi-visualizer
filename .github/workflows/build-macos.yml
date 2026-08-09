@@ -16,7 +16,6 @@ jobs:
         include:
           - arch: arm64
             runner: macos-14
-
           - arch: x86_64
             runner: macos-15-intel
 
@@ -29,7 +28,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -49,74 +48,61 @@ jobs:
             --name "Wi-Fi Visualizer" \
             dashboard.py
 
-      - name: Create working launcher
+      - name: Make app request administrator permission
         run: |
-          cp -R "dist/Wi-Fi Visualizer.app" "package/Wi-Fi Visualizer.app"
+          APP="dist/Wi-Fi Visualizer.app"
+          MACOS="$APP/Contents/MacOS"
 
+          mv "$MACOS/Wi-Fi Visualizer" \
+             "$MACOS/Wi-Fi Visualizer-bin"
+
+          cat > "$MACOS/Wi-Fi Visualizer" <<'EOF'
+          #!/bin/bash
+
+          APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+          BIN="$APP_DIR/MacOS/Wi-Fi Visualizer-bin"
+
+          BIN_ESCAPED=$(printf '%s' "$BIN" | sed 's/\\/\\\\/g; s/"/\\"/g')
+
+          /usr/bin/osascript \
+            -e "do shell script \"exec \\\"$BIN_ESCAPED\\\"\" with administrator privileges"
+          EOF
+
+          chmod +x "$MACOS/Wi-Fi Visualizer"
+
+          cp -R "$APP" "package/Wi-Fi Visualizer.app"
+
+      - name: Create launcher
+        run: |
           cat > "package/Wi-Fi Visualizer.command" <<'EOF'
           #!/bin/bash
 
           cd "$(dirname "$0")" || exit 1
 
-          echo "======================================"
-          echo "       Wi-Fi Visualizer"
-          echo "======================================"
-          echo ""
-          echo "Administrator permission is required"
-          echo "to read macOS Wi-Fi information."
-          echo ""
-
           sudo -v || exit 1
 
-          sudo "./Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer"
-
-          echo ""
-          echo "Wi-Fi Visualizer closed."
-          read -p "Press Enter to close..."
+          sudo "./Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer-bin"
           EOF
 
           chmod +x "package/Wi-Fi Visualizer.command"
 
-      - name: Create instructions
+      - name: Create README
         run: |
           cat > "package/README.txt" <<'EOF'
-          WI-FI VISUALIZER
-          =================
+          Wi-Fi Visualizer
 
-          IMPORTANT:
-          Do NOT double-click "Wi-Fi Visualizer.app".
+          You can now double-click "Wi-Fi Visualizer.app".
 
-          macOS requires administrator permission for Wi-Fi
-          signal information.
+          macOS will ask for administrator permission automatically.
 
-          To start the application:
-
-          1. Double-click:
-             Wi-Fi Visualizer.command
-
-          2. Enter your Mac password when Terminal asks.
-
-          3. The Wi-Fi Visualizer dashboard will open.
-
-          Apple Silicon Macs:
-          Use the arm64 download.
-
-          Intel Macs:
-          Use the x86_64 download.
+          The .command launcher is also included as an alternative.
           EOF
 
-      - name: Verify package
+      - name: Verify app
         run: |
-          test -d "package/Wi-Fi Visualizer.app"
-          test -x "package/Wi-Fi Visualizer.command"
-          test -f "package/README.txt"
           test -x "package/Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer"
-
-          echo "=== PACKAGE ==="
-          find package -maxdepth 3 -print
-
-          echo "=== LAUNCHER ==="
-          cat "package/Wi-Fi Visualizer.command"
+          test -x "package/Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer-bin"
+          test -x "package/Wi-Fi Visualizer.command"
 
       - name: Package
         run: |
