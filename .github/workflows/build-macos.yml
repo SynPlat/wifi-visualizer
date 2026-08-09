@@ -37,7 +37,7 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build Wi-Fi Visualizer
+      - name: Build application
         run: |
           rm -rf build dist
           pyinstaller \
@@ -47,38 +47,37 @@ jobs:
             --name "Wi-Fi Visualizer" \
             dashboard.py
 
-      - name: Create launcher
+      - name: Create administrator launcher
         run: |
           cat > launcher.applescript <<'APPLESCRIPT'
-          set appPath to (POSIX path of (path to me)) & "Contents/Resources/Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer"
+          set launcherPath to POSIX path of (path to me)
+          set parentFolder to do shell script "dirname " & quoted form of launcherPath
+          set appPath to parentFolder & "/Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer"
+
           do shell script quoted form of appPath with administrator privileges
           APPLESCRIPT
 
           osacompile \
-            -o "Wi-Fi Visualizer Launcher.app" \
+            -o "dist/Wi-Fi Visualizer Launcher.app" \
             launcher.applescript
 
-      - name: Package launcher and dashboard
+      - name: Create distribution folder
         run: |
-          mkdir -p \
-            "Wi-Fi Visualizer Launcher.app/Contents/Resources"
-
-          cp -R \
-            "dist/Wi-Fi Visualizer.app" \
-            "Wi-Fi Visualizer Launcher.app/Contents/Resources/"
-
-          rm -rf dist
-          mkdir dist
+          mkdir -p "dist/Wi-Fi Visualizer"
 
           mv \
-            "Wi-Fi Visualizer Launcher.app" \
-            "dist/Wi-Fi Visualizer.app"
+            "dist/Wi-Fi Visualizer.app" \
+            "dist/Wi-Fi Visualizer/"
+
+          mv \
+            "dist/Wi-Fi Visualizer Launcher.app" \
+            "dist/Wi-Fi Visualizer/"
 
       - name: Create ZIP
         run: |
           cd dist
           zip -r "../WiFi-Visualizer-macOS-${{ matrix.arch }}.zip" \
-            "Wi-Fi Visualizer.app"
+            "Wi-Fi Visualizer"
 
       - name: Upload build
         uses: actions/upload-artifact@v4
