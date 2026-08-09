@@ -52,7 +52,11 @@ jobs:
         run: |
           cat > "Wi-Fi Visualizer.command" <<'LAUNCHER'
           #!/bin/bash
-          cd "$(dirname "$0")"
+
+          cd "$(dirname "$0")" || exit 1
+
+          sudo -v || exit 1
+
           sudo "./Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer"
           LAUNCHER
 
