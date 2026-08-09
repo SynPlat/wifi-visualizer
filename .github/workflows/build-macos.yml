@@ -48,17 +48,12 @@ jobs:
             --name "Wi-Fi Visualizer" \
             dashboard.py
 
-      - name: Create working launcher
+      - name: Create launcher
         run: |
           cat > "Wi-Fi Visualizer.command" <<'LAUNCHER'
           #!/bin/bash
-
-          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
-          cd "$SCRIPT_DIR" || exit 1
-
-          sudo -k
-          sudo "$SCRIPT_DIR/Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer"
+          cd "$(dirname "$0")"
+          sudo "./Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer"
           LAUNCHER
 
           chmod +x "Wi-Fi Visualizer.command"
@@ -107,7 +102,7 @@ jobs:
           path: release-files
           merge-multiple: true
 
-      - name: Create GitHub Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
