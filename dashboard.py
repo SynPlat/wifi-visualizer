@@ -63,15 +63,21 @@ def get_wifi_info():
         if result.returncode != 0:
             continue
 
-        output = result.stdout
+        # wdutil may write diagnostic text to stderr on some macOS versions.
+        # Parse both streams so RSSI/Noise are never silently lost.
+        output = (result.stdout or "") + "\n" + (result.stderr or "")
 
         def value(name):
-            m = re.search(
-                rf"^\s*{re.escape(name)}\s*:\s*(.+)$",
-                output,
-                re.MULTILINE,
-            )
-            return m.group(1).strip() if m else "Unknown"
+            # Accept values such as "-55 dBm", "390.0 Mbps", and "5g161/80".
+            patterns = [
+                rf"^\s*{re.escape(name)}\s*:\s*(.+?)\s*$",
+                rf"{re.escape(name)}\s*:\s*([^\r\n]+)",
+            ]
+            for pattern in patterns:
+                m = re.search(pattern, output, re.MULTILINE | re.IGNORECASE)
+                if m:
+                    return m.group(1).strip()
+            return "Unknown"
 
         data = {
             "rssi": value("RSSI"),
@@ -652,10 +658,25 @@ def update_dashboard():
     if not data:
         status.config(text="●  WIFI UNAVAILABLE",fg=RED)
         root.after(UPDATE_MS,update_dashboard); return
-    try: rssi=int(re.findall(r"-?\d+",data["rssi"])[0])
-    except Exception: rssi=-100
-    try: noise=int(re.findall(r"-?\d+",data["noise"])[0])
-    except Exception: noise=-90
+    rssi_match = re.search(r"-\d+", str(data.get("rssi", "")))
+    noise_match = re.search(r"-\d+", str(data.get("noise", "")))
+
+    # Never fake a -100 dBm reading. If parsing fails, keep the last real value.
+    if rssi_match:
+        rssi = int(rssi_match.group(0))
+    elif signal_history:
+        rssi = signal_history[-1]
+    else:
+        status.config(text="●  READING WIFI...", fg=YELLOW)
+        root.after(UPDATE_MS, update_dashboard)
+        return
+
+    if noise_match:
+        noise = int(noise_match.group(0))
+    elif noise_history:
+        noise = noise_history[-1]
+    else:
+        noise = -90
     snr=rssi-noise; elapsed=int(time.time()-start_time)
     signal_history.append(rssi); noise_history.append(noise); elapsed_history.append(elapsed)
     sp=max(0,min(100,signal_percent(rssi))); np=max(0,min(100,noise_percent(noise))); snrp=snr_percent(snr)
