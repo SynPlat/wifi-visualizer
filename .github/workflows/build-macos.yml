@@ -37,9 +37,10 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build application
+      - name: Build Wi-Fi Visualizer
         run: |
           rm -rf build dist
+
           pyinstaller \
             --noconfirm \
             --clean \
@@ -47,37 +48,49 @@ jobs:
             --name "Wi-Fi Visualizer" \
             dashboard.py
 
-      - name: Create administrator launcher
+      - name: Create launcher
         run: |
           cat > launcher.applescript <<'APPLESCRIPT'
-          set launcherPath to POSIX path of (path to me)
-          set parentFolder to do shell script "dirname " & quoted form of launcherPath
-          set appPath to parentFolder & "/Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer"
+          set outerApp to POSIX path of (path to me)
+          set realApp to outerApp & "Contents/Resources/Wi-Fi Visualizer.app"
+          set executable to realApp & "/Contents/MacOS/Wi-Fi Visualizer"
 
-          do shell script quoted form of appPath with administrator privileges
+          do shell script quoted form of executable with administrator privileges
           APPLESCRIPT
 
           osacompile \
-            -o "dist/Wi-Fi Visualizer Launcher.app" \
+            -o "Wi-Fi Visualizer.app" \
             launcher.applescript
 
-      - name: Create distribution folder
+      - name: Put real app inside launcher
         run: |
-          mkdir -p "dist/Wi-Fi Visualizer"
+          mkdir -p "Wi-Fi Visualizer.app/Contents/Resources"
 
-          mv \
+          cp -R \
             "dist/Wi-Fi Visualizer.app" \
-            "dist/Wi-Fi Visualizer/"
+            "Wi-Fi Visualizer.app/Contents/Resources/"
 
-          mv \
-            "dist/Wi-Fi Visualizer Launcher.app" \
-            "dist/Wi-Fi Visualizer/"
+      - name: Ad-hoc sign final launcher
+        run: |
+          codesign \
+            --force \
+            --deep \
+            --sign - \
+            "Wi-Fi Visualizer.app"
 
       - name: Create ZIP
         run: |
-          cd dist
-          zip -r "../WiFi-Visualizer-macOS-${{ matrix.arch }}.zip" \
-            "Wi-Fi Visualizer"
+          mkdir -p dist-release
+
+          cp -R \
+            "Wi-Fi Visualizer.app" \
+            dist-release/
+
+          cd dist-release
+
+          zip -r \
+            "../WiFi-Visualizer-macOS-${{ matrix.arch }}.zip" \
+            "Wi-Fi Visualizer.app"
 
       - name: Upload build
         uses: actions/upload-artifact@v4
@@ -99,7 +112,7 @@ jobs:
           path: release-files
           merge-multiple: true
 
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
