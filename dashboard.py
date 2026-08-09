@@ -29,7 +29,7 @@ def ensure_admin():
 
     # Escape the shell command for an AppleScript string literal.
     shell_command = f"exec {executable}"
-    applescript_string = shell_command.replace("\\", "\\\\").replace('"', '\\\"')
+    applescript_string = shell_command.replace("\\\\", "\\\\\\\\").replace('"', '\\\\\\"')
 
     script = (
         f'do shell script "{applescript_string}" '
@@ -145,7 +145,7 @@ def get_wifi_info():
         if result.returncode == 0:
             output = result.stdout
             current = re.search(
-                r"Current Network Information:\s*\n\s*([^\n:]+):",
+                r"Current Network Information:\s***\n**\s*([^**\n**:]+):",
                 output,
             )
             channel = re.search(r"^\s*Channel:\s*(.+)$", output, re.MULTILINE)
@@ -485,9 +485,23 @@ def make_label(parent, text="", size=10, bold=False, fg=WHITE, bg=PANEL, **kwarg
 
 root = tk.Tk()
 root.title("Wi-Fi Visualizer")
-root.geometry("1320x900")
-root.minsize(1100, 760)
+
+# Screen-aware sizing so the complete dashboard remains visible.
+screen_w = root.winfo_screenwidth()
+screen_h = root.winfo_screenheight()
+window_w = min(1320, screen_w - 80)
+window_h = min(760, screen_h - 100)
+window_w = max(window_w, 1000)
+window_h = max(window_h, 650)
+
+root.geometry(f"{window_w}x{window_h}")
+root.minsize(1000, 650)
 root.configure(bg=BG)
+
+root.update_idletasks()
+x = max(0, (screen_w - window_w) // 2)
+y = max(0, (screen_h - window_h) // 2)
+root.geometry(f"{window_w}x{window_h}+{x}+{y}")
 
 style = ttk.Style()
 try:
