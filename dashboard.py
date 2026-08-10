@@ -658,10 +658,15 @@ def run_speed_test():
         upload = None
 
         for line in output.splitlines():
-            if re.search(r"download capacity", line, re.I):
-                download = _parse_capacity(line)
-            elif re.search(r"upload capacity", line, re.I):
-                upload = _parse_capacity(line)
+            # macOS networkQuality has different labels across releases.
+            if re.search(r"(download|downlink).*?(capacity|throughput)", line, re.I):
+                parsed = _parse_capacity(line)
+                if parsed is not None:
+                    download = parsed
+            elif re.search(r"(upload|uplink).*?(capacity|throughput)", line, re.I):
+                parsed = _parse_capacity(line)
+                if parsed is not None:
+                    upload = parsed
 
         if download is not None or upload is not None:
             return {
@@ -1846,6 +1851,17 @@ def open_tools():
                 )
                 explanation_icon.config(text="!", fg=YELLOW)
 
+            if download is None and upload is None:
+                connection_label.config(
+                    text="Speed test finished, but download/upload could not be measured.",
+                    fg=YELLOW
+                )
+                raw = str(result.get("raw", "")).replace("\n", " ").strip()
+                if raw:
+                    loss_explain_label.config(
+                        text="Speed service response: " + raw[:260]
+                    )
+
             overall_status.config(text="● READY", fg=GREEN)
             monitor_status.config(
                 text="● MONITORING" if sniff_running["value"] else "● READY",
@@ -2154,10 +2170,16 @@ def open_tools():
                                fg=YELLOW)
 
         def worker():
-            interface = _get_default_interface()
-            local_ip = _get_local_ip(interface)
-            gateway = _get_gateway()
-            dns_latency = _ping_host("1.1.1.1", 3)
+            error = None
+            try:
+                interface = _get_default_interface()
+                local_ip = _get_local_ip(interface)
+                gateway = _get_gateway()
+                dns_latency = _ping_host("1.1.1.1", 3)
+            except Exception as exc:
+                interface = local_ip = gateway = None
+                dns_latency = None
+                error = str(exc)
 
             def finish():
                 insights_running["value"] = False
@@ -2192,8 +2214,12 @@ def open_tools():
                 )
 
                 insights_status.config(
-                    text="Network information refreshed.",
-                    fg=GREEN
+                    text=(
+                        "Network information refreshed."
+                        if not error else
+                        f"Network check completed with an error: {error[:110]}"
+                    ),
+                    fg=GREEN if not error else YELLOW
                 )
 
             root.after(0, finish)
@@ -2252,9 +2278,13 @@ def open_tools():
 
         def worker():
             results = []
-            for host, name in [("1.1.1.1", "Cloudflare"), ("8.8.8.8", "Google")]:
-                latency = _ping_host(host, 2)
-                results.append((name, latency))
+            error = None
+            try:
+                for host, name in [("1.1.1.1", "Cloudflare"), ("8.8.8.8", "Google")]:
+                    latency = _ping_host(host, 2)
+                    results.append((name, latency))
+            except Exception as exc:
+                error = str(exc)
 
             def finish():
                 dns_check_running["value"] = False
@@ -2262,6 +2292,12 @@ def open_tools():
                 dns_check_button.label.config(text="TEST DNS")
 
                 available = [(name, ms) for name, ms in results if ms is not None]
+                if error and not available:
+                    dns_health_text.config(
+                        text=f"DNS test failed: {error[:130]}",
+                        fg=RED
+                    )
+                    return
                 if not available:
                     dns_health_text.config(
                         text="Neither DNS server replied. Your DNS/internet connection may be unavailable.",
@@ -2445,10 +2481,15 @@ def open_tools():
         )
 
         def worker():
-            hops = _traceroute_hops()
-            mtu = _path_mtu()
-            public_ip = _public_ip()
-            portal_code = _captive_portal()
+            error = None
+            try:
+                hops = _traceroute_hops()
+                mtu = _path_mtu()
+                public_ip = _public_ip()
+                portal_code = _captive_portal()
+            except Exception as exc:
+                hops = mtu = public_ip = portal_code = None
+                error = str(exc)
 
             def finish():
                 lab_running["value"] = False
@@ -2487,8 +2528,11 @@ def open_tools():
                 good = sum(x is not None for x in
                            (hops, mtu, public_ip, portal_code))
                 lab_status.config(
-                    text=f"Advanced checks complete • {good}/4 checks returned data.",
-                    fg=GREEN if good >= 3 else YELLOW
+                    text=(
+                        f"Advanced checks complete • {good}/4 checks returned data."
+                        + (f" • {error[:100]}" if error else "")
+                    ),
+                    fg=GREEN if good >= 3 and not error else YELLOW
                 )
 
             root.after(0, finish)
