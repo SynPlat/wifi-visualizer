@@ -1,4 +1,4 @@
-name: Build Wi-Fi Visualizer
+name: Build Wi-Fi Visualizer for macOS
 
 on:
   push:
@@ -12,10 +12,11 @@ permissions:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: arm64
-            runner: macos-14
+            runner: macos-15
           - arch: x86_64
             runner: macos-15-intel
 
@@ -35,6 +36,10 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller
+
+      - name: Verify dashboard
+        run: |
+          python -m py_compile dashboard.py
 
       - name: Build application
         run: |
@@ -90,16 +95,24 @@ jobs:
         run: |
           cat > "package/README.txt" <<'EOF'
           Wi-Fi Visualizer
+          =================
 
-          You can now double-click "Wi-Fi Visualizer.app".
+          Double-click "Wi-Fi Visualizer.app" to launch.
 
-          macOS will ask for administrator permission automatically.
+          macOS will request administrator permission because
+          Wi-Fi Visualizer requires access to network information.
 
-          The .command launcher is also included as an alternative.
+          Alternative:
+          "Wi-Fi Visualizer.command" can be used from Terminal.
+
+          Architecture builds:
+          - Apple Silicon (arm64)
+          - Intel (x86_64)
           EOF
 
-      - name: Verify app
+      - name: Verify application
         run: |
+          test -d "package/Wi-Fi Visualizer.app"
           test -x "package/Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer"
           test -x "package/Wi-Fi Visualizer.app/Contents/MacOS/Wi-Fi Visualizer-bin"
           test -x "package/Wi-Fi Visualizer.command"
