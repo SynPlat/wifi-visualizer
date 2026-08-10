@@ -16,6 +16,10 @@ import csv
 from collections import deque, defaultdict
 
 
+def _after_first_paint(root, callback, delay=80):
+    """Run non-critical startup work after Tk has rendered the first frame."""
+    root.after(delay, callback)
+
 # ============================================================
 # MACOS ADMIN ELEVATION
 # ============================================================
@@ -390,35 +394,200 @@ threading.Thread(target=ping_worker, daemon=True).start()
 # ============================================================
 
 def scan_networks():
-    """Return nearby Wi-Fi networks using macOS system_profiler JSON.
+    """Return nearby Wi-Fi networks using fast macOS scan methods.
 
-    JSON is considerably more stable than parsing the human-readable output.
-    A text parser is retained as a fallback for older macOS versions.
+    The scan itself runs in a background thread from open_scanner(). This
+    function focuses only on getting accurate nearby-network data.
     """
+    import json
+
+    def normalize(networks):
+        unique = {}
+        for n in networks:
+            if not n.get("ssid"):
+                n["ssid"] = "(Hidden Network)"
+            if n.get("signal") is None:
+                continue
+            key = (n["ssid"], str(n.get("channel", "?")), n["signal"])
+            unique[key] = n
+        return list(unique.values())
+
+    def parse_airport(output):
+        found = []
+        # Match BSSID + RSSI + channel rather than relying on fixed column
+        # positions. Channel may be "149", "149,+", or "149,+,80".
+        pattern = re.compile(
+            r"^\s*(.*?)\s+"
+            r"([0-9a-f]{2}(?::[0-9a-f]{2}){5})\s+"
+            r"(-?\d+)\s+"
+            r"(\d+[^ \t]*)\s+"
+            r"(.*)$",
+            re.I
+        )
+
+        for line in output.splitlines():
+            m = pattern.match(line)
+            if not m:
+                continue
+
+            ssid, _bssid, rssi, channel, remainder = m.groups()
+
+            try:
+                rssi = int(rssi)
+            except Exception:
+                continue
+
+            cm = re.match(r"(\d+)", channel)
+            if not cm:
+                continue
+
+            ch = int(cm.group(1))
+            band = (
+                "2.4 GHz" if ch <= 14 else
+                "5 GHz" if ch <= 177 else
+                "6 GHz"
+            )
+
+            # Security is normally the final column.
+            security = remainder.strip() or "?"
+            found.append({
+                "ssid": ssid.strip() or "(Hidden Network)",
+                "channel": channel,
+                "band": band,
+                "signal": rssi,
+                "security": security,
+            })
+
+        return normalize(found)
+
+    def parse_profiler_text(output):
+        """Fallback parser for macOS system_profiler text output."""
+        networks = []
+        current = None
+        inside = False
+
+        for raw in output.splitlines():
+            stripped = raw.strip()
+
+            if stripped == "Other Local Wi-Fi Networks:":
+                inside = True
+                current = None
+                continue
+
+            if not inside:
+                continue
+
+            # A new indented SSID entry.
+            if (
+                raw.startswith("        ")
+                and stripped.endswith(":")
+                and not stripped.startswith((
+                    "PHY Mode:", "Channel:", "Network Type:",
+                    "Security:", "Signal / Noise:", "Transmit Rate:",
+                    "MCS Index:", "Country Code:"
+                ))
+            ):
+                if current and current.get("signal") is not None:
+                    networks.append(current)
+
+                current = {
+                    "ssid": stripped[:-1],
+                    "channel": "?",
+                    "band": "?",
+                    "signal": None,
+                    "security": "?"
+                }
+                continue
+
+            if current is None:
+                continue
+
+            if stripped.startswith("Channel:"):
+                channel = stripped.split(":", 1)[1].strip()
+                current["channel"] = channel
+                m = re.search(r"\d+", channel)
+                if m:
+                    ch = int(m.group())
+                    current["band"] = (
+                        "2.4 GHz" if ch <= 14 else
+                        "5 GHz" if ch <= 177 else
+                        "6 GHz"
+                    )
+
+            elif stripped.startswith("Signal / Noise:"):
+                nums = re.findall(
+                    r"-?\d+",
+                    stripped.split(":", 1)[1]
+                )
+                if nums:
+                    current["signal"] = int(nums[0])
+
+            elif stripped.startswith("Security:"):
+                current["security"] = stripped.split(
+                    ":", 1
+                )[1].strip() or "?"
+
+        if current and current.get("signal") is not None:
+            networks.append(current)
+
+        return normalize(networks)
+
+    # Fast path: Apple's legacy airport scanner. Some newer macOS versions
+    # hide this binary, so failure here is expected and harmless.
+    airport = (
+        "/System/Library/PrivateFrameworks/Apple80211.framework/"
+        "Versions/Current/Resources/airport"
+    )
+
+    if os.path.exists(airport):
+        try:
+            result = subprocess.run(
+                [airport, "-s"],
+                capture_output=True,
+                text=True,
+                timeout=8
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                networks = parse_airport(result.stdout)
+                if networks:
+                    return networks
+        except Exception:
+            pass
+
+    # Primary modern fallback.
     try:
         result = subprocess.run(
             ["/usr/sbin/system_profiler", "SPAirPortDataType", "-json"],
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=20
         )
     except Exception:
         result = None
 
     if result is not None and result.returncode == 0 and result.stdout.strip():
         try:
-            import json
             payload = json.loads(result.stdout)
             found = []
 
             def walk(obj, in_other=False):
                 if isinstance(obj, dict):
                     name = obj.get("_name") or obj.get("name")
-                    local = in_other or name == "Other Local Wi-Fi Networks"
+                    local = (
+                        in_other or
+                        name == "Other Local Wi-Fi Networks"
+                    )
 
                     if local and name and name != "Other Local Wi-Fi Networks":
-                        channel = str(obj.get("spchannel") or obj.get("channel") or "?")
-                        signal = obj.get("spairport_signal_noise") or obj.get("signal_noise")
+                        channel = str(
+                            obj.get("spchannel") or
+                            obj.get("channel") or "?"
+                        )
+                        signal = (
+                            obj.get("spairport_signal_noise") or
+                            obj.get("signal_noise")
+                        )
+
                         if isinstance(signal, str):
                             nums = re.findall(r"-?\d+", signal)
                             signal = int(nums[0]) if nums else None
@@ -428,14 +597,14 @@ def scan_networks():
                             except Exception:
                                 signal = None
 
-                        security = obj.get("spsecurity") or obj.get("security") or "?"
-                        band = "?"
-                        if "2GHz" in channel or "2.4" in channel:
-                            band = "2.4 GHz"
-                        elif "5GHz" in channel or "5 GHz" in channel:
-                            band = "5 GHz"
-                        elif "6GHz" in channel or "6 GHz" in channel:
-                            band = "6 GHz"
+                        m = re.search(r"\d+", channel)
+                        ch = int(m.group()) if m else None
+
+                        band = (
+                            "2.4 GHz" if ch is not None and ch <= 14 else
+                            "5 GHz" if ch is not None and ch <= 177 else
+                            "6 GHz" if ch is not None else "?"
+                        )
 
                         if signal is not None:
                             found.append({
@@ -443,7 +612,10 @@ def scan_networks():
                                 "channel": channel,
                                 "band": band,
                                 "signal": signal,
-                                "security": str(security),
+                                "security": str(
+                                    obj.get("spsecurity") or
+                                    obj.get("security") or "?"
+                                )
                             })
 
                     for value in obj.values():
@@ -454,88 +626,28 @@ def scan_networks():
                         walk(value, in_other)
 
             walk(payload)
-
-            # De-duplicate networks that appear more than once in JSON.
-            unique = {}
-            for n in found:
-                key = (n["ssid"], n["channel"], n["signal"])
-                unique[key] = n
-            if unique:
-                return list(unique.values())
+            networks = normalize(found)
+            if networks:
+                return networks
         except Exception:
             pass
 
-    # Fallback for macOS versions whose JSON schema differs.
+    # Final fallback: human-readable system_profiler output. This restores
+    # compatibility with macOS versions whose JSON schema doesn't expose the
+    # "Other Local Wi-Fi Networks" section in the expected structure.
     try:
         result = subprocess.run(
             ["/usr/sbin/system_profiler", "SPAirPortDataType"],
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=20
         )
+        if result.returncode == 0:
+            return parse_profiler_text(result.stdout)
     except Exception:
-        return []
+        pass
 
-    if result.returncode != 0:
-        return []
-
-    networks = []
-    current = None
-    inside = False
-
-    for raw in result.stdout.splitlines():
-        stripped = raw.strip()
-
-        if stripped == "Other Local Wi-Fi Networks:":
-            inside = True
-            continue
-
-        if not inside:
-            continue
-
-        if stripped.startswith("Current Network Information:"):
-            break
-
-        if (
-            raw.startswith("        ")
-            and stripped.endswith(":")
-            and not stripped.startswith((
-                "PHY Mode:", "Channel:", "Network Type:", "Security:",
-                "Signal / Noise:", "Transmit Rate:",
-            ))
-        ):
-            if current:
-                networks.append(current)
-            current = {
-                "ssid": stripped[:-1], "channel": "?", "band": "?",
-                "signal": None, "security": "?"
-            }
-            continue
-
-        if current is None:
-            continue
-
-        if stripped.startswith("Channel:"):
-            ch = stripped.split(":", 1)[1].strip()
-            current["channel"] = ch
-            if "2GHz" in ch:
-                current["band"] = "2.4 GHz"
-            elif "5GHz" in ch:
-                current["band"] = "5 GHz"
-            elif "6GHz" in ch:
-                current["band"] = "6 GHz"
-        elif stripped.startswith("Signal / Noise:"):
-            nums = re.findall(r"-?\d+", stripped.split(":", 1)[1])
-            if nums:
-                current["signal"] = int(nums[0])
-        elif stripped.startswith("Security:"):
-            current["security"] = stripped.split(":", 1)[1].strip()
-
-    if current:
-        networks.append(current)
-
-    return [n for n in networks if n["signal"] is not None]
-
+    return []
 
 def channel_analysis(networks):
     channels = defaultdict(list)
@@ -3153,29 +3265,80 @@ def open_scanner():
     chart_card=card(win); chart_card.pack(fill="x",padx=24,pady=(0,8))
     make_label(chart_card,"CHANNEL CONGESTION",10,True,CYAN).pack(anchor="w",padx=14,pady=(10,2))
     chart_frame=tk.Frame(chart_card,bg=PANEL); chart_frame.pack(fill="x")
+    scan_running = {"value": False}
+
     def do_scan():
-        result_label.config(text="SCANNING..."); win.update_idletasks()
-        for i in tree.get_children(): tree.delete(i)
-        nets=scan_networks()
-        for n in nets:
-            tree.insert("", "end", values=(n["ssid"],n["channel"],n["band"],f"{n['signal']} dBm",n["security"]))
-        for w in chart_frame.winfo_children(): w.destroy()
-        current=None
-        try:
-            d=get_wifi_info()
-            if d: current=d.get("channel")
-        except Exception: pass
-        show_channel_chart(chart_frame,nets,current)
-        rec=recommended_channel(nets)
-        if rec is not None:
-            count=len(channel_analysis(nets)[rec])
-            state="LOW" if count<=1 else ("MEDIUM" if count==2 else "HIGH")
-            result_label.config(text=f"RECOMMENDED CHANNEL  {rec}   •   {state} CONGESTION   •   {len(nets)} NETWORKS")
-        else: result_label.config(text=f"{len(nets)} NETWORKS FOUND")
-    tk.Button(win,text="SCAN NEARBY NETWORKS",command=do_scan,font=("Helvetica",10,"bold"),
-              fg=BG,bg=CYAN,activebackground="#55efff",activeforeground=BG,relief="flat",
-              bd=0,padx=24,pady=10,cursor="hand2").pack(pady=(4,18))
-    do_scan()
+        if scan_running["value"]:
+            return
+        scan_running["value"] = True
+        scan_button.config(state="disabled", text="SCANNING…")
+        result_label.config(text="SCANNING NEARBY NETWORKS…")
+
+        for item in tree.get_children():
+            tree.delete(item)
+
+        def worker():
+            try:
+                nets = scan_networks()
+                error = None
+            except Exception as exc:
+                nets = []
+                error = str(exc)
+
+            def finish():
+                scan_running["value"] = False
+                scan_button.config(state="normal", text="SCAN NEARBY NETWORKS")
+                if error:
+                    result_label.config(text=f"SCAN FAILED • {error[:100]}")
+                    return
+
+                for n in nets:
+                    tree.insert(
+                        "", "end",
+                        values=(
+                            n["ssid"], n["channel"], n["band"],
+                            f"{n['signal']} dBm", n["security"]
+                        )
+                    )
+
+                for w in chart_frame.winfo_children():
+                    w.destroy()
+
+                current = None
+                try:
+                    d = get_wifi_info()
+                    if d:
+                        current = d.get("channel")
+                except Exception:
+                    pass
+
+                show_channel_chart(chart_frame, nets, current)
+                rec = recommended_channel(nets)
+
+                if rec is not None:
+                    count = len(channel_analysis(nets)[rec])
+                    state = "LOW" if count <= 1 else "MEDIUM" if count == 2 else "HIGH"
+                    result_label.config(
+                        text=(
+                            f"RECOMMENDED CHANNEL  {rec}   •   "
+                            f"{state} CONGESTION   •   {len(nets)} NETWORKS"
+                        )
+                    )
+                else:
+                    result_label.config(text=f"{len(nets)} NETWORKS FOUND")
+
+            root.after(0, finish)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    scan_button = tk.Button(
+        win, text="SCAN NEARBY NETWORKS", command=do_scan,
+        font=("Helvetica",10,"bold"), fg=BG, bg=CYAN,
+        activebackground="#55efff", activeforeground=BG,
+        disabledforeground=MUTED, relief="flat", bd=0,
+        padx=24, pady=10, cursor="hand2"
+    )
+    scan_button.pack(pady=(4,18))
 
 wifi_cache = {"data": None, "busy": False}
 
@@ -3263,4 +3426,24 @@ def update_dashboard():
 
 request_wifi_update()
 update_dashboard()
+# ------------------------------------------------------------
+# Fast startup
+# ------------------------------------------------------------
+# Let Tk paint the dashboard before performing any optional network
+# initialization. Tests remain manual and their worker threads are unchanged.
+def _finish_fast_startup():
+    try:
+        if "run_connection_insights" in globals():
+            # Do not automatically run a network test; only mark the UI ready.
+            pass
+    except Exception:
+        pass
+
+try:
+    root.update_idletasks()
+except Exception:
+    pass
+
+_after_first_paint(root, _finish_fast_startup, 80)
+
 root.mainloop()
