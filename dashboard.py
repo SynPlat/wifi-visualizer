@@ -2,6 +2,11 @@ import tkinter as tk
 from tkinter import ttk, filedialog
 import subprocess
 import os
+
+# Always resolve project-relative files from the dashboard's own location.
+# This makes direct Python launches and bundled .app launches consistent.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+os.chdir(BASE_DIR)
 import re
 import threading
 import time
@@ -79,91 +84,202 @@ start_time = time.time()
 # ============================================================
 
 def get_wifi_info():
-    """Read live Wi-Fi information on macOS.
+    """Read live Wi-Fi information on macOS with multiple fallbacks.
 
-    The app is normally started through the .command launcher with sudo.
-    When already running as root, call wdutil directly instead of spawning
-    another sudo process. If that fails, fall back to system_profiler so the
-    dashboard can still identify the current Wi-Fi network.
+    macOS versions differ in what wdutil exposes to a bundled/root process.
+    Try wdutil first, then networksetup/system_profiler so the dashboard can
+    still detect Wi-Fi when one diagnostic interface is unavailable.
     """
-    commands = []
 
+    def parse_value(output, *names):
+        for name in names:
+            patterns = [
+                rf"^\s*{re.escape(name)}\s*:\s*(.+?)\s*$",
+                rf"{re.escape(name)}\s*:\s*([^\r\n]+)",
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, output, re.MULTILINE | re.IGNORECASE)
+                if match:
+                    value = match.group(1).strip()
+                    if value:
+                        return value
+        return "Unknown"
+
+    def run_cmd(command, timeout=8):
+        try:
+            return subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
+        except Exception:
+            return None
+
+    # Find the actual Wi-Fi device instead of assuming en0.
+    interface = None
+    ports = run_cmd(
+        ["/usr/sbin/networksetup", "-listallhardwareports"],
+        timeout=5
+    )
+    if ports and ports.returncode == 0:
+        port_lines = ports.stdout.splitlines()
+        for i, line in enumerate(port_lines):
+            if line.strip().lower() in ("hardware port: wi-fi",
+                                        "hardware port: airport"):
+                if i + 1 < len(port_lines):
+                    match = re.search(r"Device:\s*(\S+)", port_lines[i + 1])
+                    if match:
+                        interface = match.group(1)
+                        break
+
+    if not interface:
+        interface = "en0"
+
+    # ------------------------------------------------------------
+    # 1. wdutil — best source when available.
+    # ------------------------------------------------------------
+    commands = []
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         commands.append(["/usr/bin/wdutil", "info"])
     else:
         commands.append(["/usr/bin/sudo", "-n", "/usr/bin/wdutil", "info"])
 
     for command in commands:
-        try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=8,
-            )
-        except Exception:
+        result = run_cmd(command)
+        if not result or result.returncode != 0:
             continue
 
-        if result.returncode != 0:
-            continue
-
-        # wdutil may write diagnostic text to stderr on some macOS versions.
-        # Parse both streams so RSSI/Noise are never silently lost.
         output = (result.stdout or "") + "\n" + (result.stderr or "")
 
-        def value(name):
-            # Accept values such as "-55 dBm", "390.0 Mbps", and "5g161/80".
-            patterns = [
-                rf"^\s*{re.escape(name)}\s*:\s*(.+?)\s*$",
-                rf"{re.escape(name)}\s*:\s*([^\r\n]+)",
-            ]
-            for pattern in patterns:
-                m = re.search(pattern, output, re.MULTILINE | re.IGNORECASE)
-                if m:
-                    return m.group(1).strip()
-            return "Unknown"
-
         data = {
-            "rssi": value("RSSI"),
-            "noise": value("Noise"),
-            "channel": value("Channel"),
-            "tx": value("Tx Rate"),
-            "phy": value("PHY Mode"),
+            "rssi": parse_value(output, "RSSI"),
+            "noise": parse_value(output, "Noise"),
+            "channel": parse_value(output, "Channel"),
+            "tx": parse_value(output, "Tx Rate", "Transmit Rate"),
+            "phy": parse_value(output, "PHY Mode", "PHY"),
+            "ssid": parse_value(output, "SSID", "BSSID"),
+            "interface": interface,
         }
 
+        # wdutil may expose only some fields. If it gives us RSSI, it's a
+        # valid live Wi-Fi source.
         if data["rssi"] != "Unknown":
             return data
 
-    # Last-resort fallback: identify the current network even if wdutil is
-    # unavailable. Signal/noise remain Unknown rather than crashing the UI.
-    try:
-        result = subprocess.run(
-            ["/usr/sbin/system_profiler", "SPAirPortDataType"],
-            capture_output=True,
-            text=True,
-            timeout=10,
+    # ------------------------------------------------------------
+    # 2. networksetup — reliable for current Wi-Fi network/device.
+    # ------------------------------------------------------------
+    network_name = None
+    airport = run_cmd(
+        ["/usr/sbin/networksetup", "-getairportnetwork", interface],
+        timeout=5
+    )
+    if airport and airport.returncode == 0:
+        match = re.search(
+            r"Current Wi-Fi Network:\s*(.+)",
+            airport.stdout or "",
+            re.IGNORECASE
         )
-        if result.returncode == 0:
-            output = result.stdout
-            current = re.search(
-                r"Current Network Information:\s***\n**\s*([^**\n**:]+):",
-                output,
-            )
-            channel = re.search(r"^\s*Channel:\s*(.+)$", output, re.MULTILINE)
-            tx = re.search(r"^\s*Transmit Rate:\s*(.+)$", output, re.MULTILINE)
-            phy = re.search(r"^\s*PHY Mode:\s*(.+)$", output, re.MULTILINE)
+        if match:
+            network_name = match.group(1).strip()
 
-            if current:
-                return {
-                    "rssi": "Unknown",
-                    "noise": "Unknown",
-                    "channel": channel.group(1).strip() if channel else "Unknown",
-                    "tx": tx.group(1).strip() if tx else "Unknown",
-                    "phy": phy.group(1).strip() if phy else "Unknown",
-                }
-    except Exception:
-        pass
+    info = run_cmd(
+        ["/usr/sbin/networksetup", "-getinfo", "Wi-Fi"],
+        timeout=5
+    )
+    info_text = (info.stdout if info and info.returncode == 0 else "") or ""
 
+    # ------------------------------------------------------------
+    # 3. system_profiler — fallback for signal/channel/PHY data.
+    # ------------------------------------------------------------
+    result = run_cmd(
+        ["/usr/sbin/system_profiler", "SPAirPortDataType"],
+        timeout=12
+    )
+    if result and result.returncode == 0:
+        output = result.stdout or ""
+
+        # Current Network Information is followed by the SSID as an
+        # indented key. Avoid the malformed regex from the old version.
+        current_match = re.search(
+            r"Current Network Information:\s*\n\s*([^:\n]+):",
+            output,
+            re.IGNORECASE
+        )
+        current_ssid = (
+            current_match.group(1).strip()
+            if current_match else network_name
+        )
+
+        channel_match = re.search(
+            r"^\s*Channel:\s*(.+)$", output, re.MULTILINE
+        )
+        tx_match = re.search(
+            r"^\s*Transmit Rate:\s*(.+)$", output, re.MULTILINE
+        )
+        phy_match = re.search(
+            r"^\s*PHY Mode:\s*(.+)$", output, re.MULTILINE
+        )
+        rssi_match = re.search(
+            r"^\s*(?:RSSI|Signal / Noise):\s*(-?\d+)",
+            output, re.MULTILINE | re.IGNORECASE
+        )
+        noise_match = re.search(
+            r"^\s*Noise:\s*(-?\d+)",
+            output, re.MULTILINE | re.IGNORECASE
+        )
+
+        if current_ssid or network_name or rssi_match:
+            return {
+                "rssi": (
+                    rssi_match.group(1) + " dBm"
+                    if rssi_match else "Unknown"
+                ),
+                "noise": (
+                    noise_match.group(1) + " dBm"
+                    if noise_match else "Unknown"
+                ),
+                "channel": (
+                    channel_match.group(1).strip()
+                    if channel_match else "Unknown"
+                ),
+                "tx": (
+                    tx_match.group(1).strip()
+                    if tx_match else "Unknown"
+                ),
+                "phy": (
+                    phy_match.group(1).strip()
+                    if phy_match else "Unknown"
+                ),
+                "ssid": current_ssid or network_name or "Unknown",
+                "interface": interface,
+            }
+
+    # ------------------------------------------------------------
+    # 4. Last fallback: networksetup can still prove Wi-Fi is connected.
+    # ------------------------------------------------------------
+    connected = (
+        network_name
+        and network_name.lower() not in (
+            "you are not associated with an airPort network.",
+            "you are not associated with a wi-fi network."
+        )
+    )
+
+    if connected:
+        return {
+            "rssi": "Unknown",
+            "noise": "Unknown",
+            "channel": "Unknown",
+            "tx": "Unknown",
+            "phy": "Unknown",
+            "ssid": network_name,
+            "interface": interface,
+        }
+
+    # If Wi-Fi is not connected, return None so the dashboard can clearly
+    # report that state rather than displaying fake readings.
     return None
 
 
@@ -471,7 +587,7 @@ def get_wifi_interface():
                 if m: return m.group(1)
     except Exception:
         pass
-    return "en0"
+    return None
 
 def run_ping_test(host="1.1.1.1", count=5):
     """Return real ICMP latency and packet-loss statistics."""
@@ -3049,7 +3165,7 @@ def update_dashboard():
     elif signal_history:
         rssi = signal_history[-1]
     else:
-        status.config(text="●  WI-FI DETAILS LIMITED", fg=YELLOW)
+        status.config(text="●  WI-FI NOT DETECTED", fg=YELLOW)
         root.after(UPDATE_MS, update_dashboard)
         return
 
